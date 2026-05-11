@@ -67,7 +67,25 @@ EOF
 fi
 say "Global command installed: $WRAPPER_TARGET"
 
-# 6. LLM API key
+# 6. Shell hook (real-time command capture with exit codes, durations, CWD)
+HOOK_LINE="source $INSTALL_DIR/shell/capman-init.sh"
+HOOK_MARKER="# capman2 shell hook"
+for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  [ -f "$rc" ] || continue
+  if grep -Fq "$HOOK_MARKER" "$rc"; then
+    say "Shell hook already present in $rc — skipping"
+  else
+    {
+      echo ""
+      echo "$HOOK_MARKER"
+      echo "$HOOK_LINE"
+    } >> "$rc"
+    say "Installed shell hook into $rc"
+  fi
+done
+say "Shell hook will activate on next shell start (or run: source ~/.bashrc)"
+
+# 7. LLM API key
 if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   warn "No LLM API key found in environment."
   echo ""
@@ -79,7 +97,7 @@ if [ -z "${OPENROUTER_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo ""
 fi
 
-# 7. Done
+# 8. Done
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  capman2 installed.${NC}  Run ${CYAN}capman start${NC} to begin capturing."

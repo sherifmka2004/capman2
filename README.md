@@ -46,7 +46,8 @@ capman2 makes it persistent, searchable, and replayable. An LLM that has seen yo
 | `mouse` | Click events, focus changes | macOS, Linux, Windows |
 | `clipboard` | Copy/paste chains with source app | macOS, Linux, Windows |
 | `screenshot` | Periodic + event-triggered screenshots with OCR | macOS, Linux, Windows |
-| `shell` | Shell history watcher (`~/.bash_history`, `~/.zsh_history`) | macOS, Linux |
+| `shell` | History watcher (`.bash_history`, `.zsh_history`) — passive fallback | macOS, Linux |
+| `shell_hook` | Real-time bash/zsh hook with command + exit code + duration + CWD + SSH/TTY context | macOS, Linux |
 | `filesystem` | File open/save/close events via watchdog | macOS, Linux, Windows |
 | `browser_relay` | Tab lifecycle, URLs, search queries, page text (via extension) | Chrome, Firefox |
 | `documents` | Slide/page/sheet navigation with dwell times | macOS, Linux, Windows |
@@ -208,6 +209,30 @@ sudo tee /usr/local/bin/capman > /dev/null << EOF
 cd $(pwd) && exec uv run capman "\$@"
 EOF
 sudo chmod +x /usr/local/bin/capman
+```
+
+### Real-time Shell Capture
+
+The installer adds a one-line hook to your `~/.bashrc` and `~/.zshrc`:
+
+```bash
+source ~/capman2/shell/capman-init.sh
+```
+
+After `source ~/.bashrc` (or opening a new terminal), every command you run gets captured **in real time** with full context:
+
+- `command` — exact command text
+- `cwd` — working directory at execution time
+- `exit_code` — success or failure
+- `duration_ms` — how long it took
+- `hostname`, `user`, `tty`, `ssh` — environmental context
+
+This works across local terminals, SSH sessions, tmux/screen, and remote servers. The hook is async (never blocks your prompt) and silently no-ops if the daemon is unreachable.
+
+You can also post custom events from any shell script:
+
+```bash
+capman-event note_taken '{"text": "remember to refactor the auth layer"}'
 ```
 
 ### LLM Backend
