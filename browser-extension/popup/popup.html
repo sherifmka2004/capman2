@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 280px;
+      font-family: system-ui, sans-serif;
+      font-size: 13px;
+      padding: 12px;
+      margin: 0;
+      background: #0f0f0f;
+      color: #e0e0e0;
+    }
+    h2 { margin: 0 0 8px; font-size: 15px; color: #fff; }
+    .status { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+    .dot.off { background: #ef4444; }
+    .row { display: flex; justify-content: space-between; margin: 4px 0; color: #aaa; }
+    .row span { color: #fff; font-weight: 500; }
+    .server { font-size: 11px; color: #666; margin-top: 10px; word-break: break-all; }
+    .server input {
+      width: 100%; box-sizing: border-box; margin-top: 4px;
+      background: #1e1e1e; border: 1px solid #333; color: #e0e0e0;
+      border-radius: 4px; padding: 4px 6px; font-size: 11px;
+    }
+    button {
+      margin-top: 8px; width: 100%; padding: 6px;
+      background: #2563eb; color: white; border: none;
+      border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <h2>capman2</h2>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="status-text">Connecting...</span>
+  </div>
+  <div class="row">Events sent <span id="count">0</span></div>
+  <div class="row">Last event <span id="last">—</span></div>
+  <div class="server">
+    Server URL
+    <input id="server-url" type="text" placeholder="http://192.168.51.80:7331">
+  </div>
+  <button id="save-btn">Save & Reconnect</button>
+  <script src="popup.js"></script>
+</body>
+</html>

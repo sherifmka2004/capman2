@@ -1,0 +1,3 @@
+[platform]
+ocr_backend = "tesseract"
+window_backend = "xdotool"

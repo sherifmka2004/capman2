@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+
+# uv
+.uv-cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local data (never commit user-captured activity)
+.capman/
+~/.capman/
+*.db
+*.db-shm
+*.db-wal
+chroma/
+knowledge/
+screenshots/
+*.log
+
+# Local config / secrets
+.env
+.env.local
+*.local.toml

@@ -1,0 +1,20 @@
+# Headless / server override — disables sensors that require a display (X11)
+# Merge on top of default.toml + linux.toml
+
+[sensors]
+enabled = ["shell", "filesystem", "browser_relay"]
+
+[pipeline.session]
+idle_threshold_s = 60
+cool_period_s = 60
+hard_break_s = 600
+min_session_events = 2
+min_session_duration_s = 30
+
+[pipeline.analysis]
+enabled = true
+batch_delay_s = 20
+pass1_model = "claude-haiku-4-5"
+pass2_model = "claude-sonnet-4-6"
+pass3_model = "claude-haiku-4-5"
+cot_reusability_threshold = 0.3

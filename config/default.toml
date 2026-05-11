@@ -1,0 +1,65 @@
+[core]
+data_dir = "~/.capman"
+log_level = "INFO"
+
+[sensors]
+enabled = ["window", "screenshot", "keyboard", "clipboard", "shell", "filesystem", "browser_relay", "documents"]
+
+[sensors.screenshot]
+interval_seconds = 30
+on_event_types = ["url_visit", "shell_command"]
+save_dir = "~/.capman/screenshots"
+max_disk_gb = 5.0
+
+[sensors.keyboard]
+aggregate_window_ms = 500
+exclude_apps = ["1Password", "Keychain", "Signal", "Bitwarden"]
+min_text_length = 3
+
+[sensors.mouse]
+track_clicks = true
+
+[sensors.clipboard]
+poll_interval_ms = 500
+
+[sensors.shell]
+watch_files = ["~/.bash_history", "~/.zsh_history"]
+capture_output = false
+output_max_bytes = 4096
+
+[sensors.filesystem]
+watch_paths = ["~/Desktop", "~/Downloads", "~/Documents", "~/code", "~/projects"]
+extensions = [".py", ".js", ".ts", ".tsx", ".go", ".rs", ".md", ".json", ".yaml", ".toml", ".sh", ".sql"]
+
+[sensors.browser_relay]
+port = 7331
+
+[sensors.documents]
+poll_interval_s = 2.0
+# Minimum dwell seconds before a slide/page change is considered meaningful
+min_dwell_s = 3.0
+
+[pipeline.session]
+idle_threshold_s = 90
+cool_period_s = 120
+hard_break_s = 1200
+min_session_events = 5
+min_session_duration_s = 120
+
+[pipeline.analysis]
+enabled = true
+pass1_model = "claude-haiku-4-5-20251001"
+pass2_model = "claude-sonnet-4-6"
+pass3_model = "claude-haiku-4-5-20251001"
+batch_delay_s = 300
+cot_reusability_threshold = 0.5
+
+[storage]
+sqlite_path = "~/.capman/timeline.db"
+chroma_path = "~/.capman/chroma"
+knowledge_dir = "~/.capman/knowledge"
+obsidian_vault = ""
+
+[api]
+host = "0.0.0.0"
+port = 7331

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "capman2 Knowledge Capture",
+  "version": "0.1.0",
+  "description": "Captures browser activity for capman2 personal knowledge engine",
+  "permissions": ["tabs", "activeTab", "storage"],
+  "host_permissions": [
+    "http://localhost:7331/*",
+    "http://127.0.0.1:7331/*",
+    "http://192.168.51.80:7331/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "capman2"
+  }
+}

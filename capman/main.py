@@ -1,0 +1,277 @@
+"""
+capman2 — Personal Cognitive Workflow Capture Engine
+CLI entry point and daemon orchestrator.
+
+Commands:
+  capman start    — Start the capture daemon
+  capman stop     — Stop the daemon (sends SIGTERM to PID file)
+  capman status   — Show current status
+  capman query    — Semantic search over captured knowledge
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import signal
+import sys
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+
+from capman.config import load_config, get_data_dir
+
+console = Console()
+logger = logging.getLogger("capman")
+
+
+def setup_logging(level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+@click.group()
+def cli():
+    """capman2 — cognitive workflow capture engine"""
+
+
+def _detect_headless() -> bool:
+    """Return True if running without a display (server/SSH without X11)."""
+    if sys.platform == "linux":
+        return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+    return False
+
+
+@cli.command()
+@click.option("--config-dir", default=None, help="Path to config directory")
+@click.option("--batch-delay", default=None, type=int, help="Override analysis batch delay (seconds)")
+@click.option("--headless", is_flag=True, default=False, help="Force headless mode (no display sensors)")
+def start(config_dir, batch_delay, headless):
+    """Start the capman capture daemon."""
+    extra_overrides = []
+    if headless or _detect_headless():
+        extra_overrides.append("headless")
+        console.print("[dim]Headless mode detected — display sensors disabled[/dim]")
+
+    config = load_config(Path(config_dir) if config_dir else None, extra_overrides=extra_overrides)
+    if batch_delay is not None:
+        config.setdefault("pipeline", {}).setdefault("analysis", {})["batch_delay_s"] = batch_delay
+
+    setup_logging(config["core"]["log_level"])
+    data_dir = get_data_dir(config)
+
+    # Write PID file
+    pid_file = data_dir / "capman.pid"
+    pid_file.write_text(str(os.getpid()))
+
+    console.print(f"[bold green]capman2 starting[/bold green]")
+    console.print(f"  Data dir:  {data_dir}")
+    console.print(f"  DB:        {config['storage']['sqlite_path']}")
+    console.print(f"  API port:  {config['api']['port']}")
+
+    try:
+        asyncio.run(_run_daemon(config))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        pid_file.unlink(missing_ok=True)
+        console.print("[yellow]capman2 stopped.[/yellow]")
+
+
+async def _run_daemon(config: dict) -> None:
+    from capman.storage.timeline import TimelineDB
+    from capman.pipeline.buffer import AsyncEventBuffer
+    from capman.pipeline.runner import PipelineRunner
+    from capman.sensors.registry import SensorRegistry
+
+    # Initialize storage
+    db = TimelineDB(config["storage"]["sqlite_path"])
+    await db.migrate()
+    logger.info("Storage initialized: %s", config["storage"]["sqlite_path"])
+
+    # Shared event queue
+    queue: asyncio.Queue = asyncio.Queue(maxsize=10_000)
+    buffer = AsyncEventBuffer.__new__(AsyncEventBuffer)
+    buffer._queue = queue
+
+    # Start API server in background
+    api_task = asyncio.create_task(_start_api_server(config, db))
+
+    # Discover and instantiate sensors
+    registry = SensorRegistry()
+    registry.discover()
+    sensor_classes = registry.get_enabled(config)
+    sensors = [cls(config, queue) for cls in sensor_classes]
+
+    sensor_names = [cls.sensor_id for cls in sensor_classes]
+    logger.info("Sensors enabled: %s", ", ".join(sensor_names))
+    console.print(f"  Sensors:   {', '.join(sensor_names)}")
+    console.print(f"[bold green]Running...[/bold green] (Ctrl+C to stop)\n")
+
+    # Setup sensors
+    for sensor in sensors:
+        await sensor.setup()
+
+    # Pipeline runner
+    pipeline = PipelineRunner(buffer, db, config)
+
+    # Setup shutdown handler
+    stop_event = asyncio.Event()
+
+    def _shutdown(sig, frame):
+        console.print("\n[yellow]Shutting down...[/yellow]")
+        for sensor in sensors:
+            sensor.stop()
+        pipeline.stop()
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    # Run all sensors + pipeline concurrently
+    sensor_tasks = [asyncio.create_task(s.run()) for s in sensors]
+    pipeline_task = asyncio.create_task(pipeline.run())
+
+    await stop_event.wait()
+
+    # Graceful shutdown
+    for task in sensor_tasks:
+        task.cancel()
+    pipeline_task.cancel()
+    api_task.cancel()
+
+    await asyncio.gather(*sensor_tasks, pipeline_task, api_task, return_exceptions=True)
+
+    for sensor in sensors:
+        await sensor.teardown()
+
+    event_count = await db.get_event_count()
+    console.print(f"[dim]Total events captured: {event_count}[/dim]")
+    await db.close()
+
+
+async def _start_api_server(config: dict, db) -> None:
+    try:
+        import uvicorn
+        from capman.api.server import create_app
+        app = create_app(config, db)
+        server_config = uvicorn.Config(
+            app,
+            host=config["api"]["host"],
+            port=config["api"]["port"],
+            log_level="info",
+            access_log=True,
+        )
+        server = uvicorn.Server(server_config)
+        await server.serve()
+    except Exception as e:
+        logger.warning("API server failed to start: %s", e)
+
+
+@cli.command()
+def stop():
+    """Stop a running capman daemon."""
+    config = load_config()
+    data_dir = get_data_dir(config)
+    pid_file = data_dir / "capman.pid"
+
+    if not pid_file.exists():
+        console.print("[red]No capman daemon running (no PID file found)[/red]")
+        sys.exit(1)
+
+    pid = int(pid_file.read_text().strip())
+    try:
+        os.kill(pid, signal.SIGTERM)
+        console.print(f"[green]Sent SIGTERM to capman daemon (PID {pid})[/green]")
+    except ProcessLookupError:
+        console.print(f"[yellow]PID {pid} not found — daemon may have already stopped[/yellow]")
+        pid_file.unlink(missing_ok=True)
+
+
+@cli.command()
+def status():
+    """Show current capman daemon status."""
+    config = load_config()
+    data_dir = get_data_dir(config)
+    pid_file = data_dir / "capman.pid"
+
+    running = False
+    if pid_file.exists():
+        pid = int(pid_file.read_text().strip())
+        try:
+            os.kill(pid, 0)  # Signal 0 checks if process exists
+            running = True
+            console.print(f"[green]capman2 running[/green] (PID {pid})")
+        except ProcessLookupError:
+            console.print("[yellow]capman2 not running[/yellow] (stale PID file)")
+    else:
+        console.print("[yellow]capman2 not running[/yellow]")
+
+    if running:
+        # Show stats from DB
+        try:
+            import sqlite3
+            conn = sqlite3.connect(config["storage"]["sqlite_path"])
+            events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            analyzed = conn.execute("SELECT COUNT(*) FROM session_analyses").fetchone()[0]
+            conn.close()
+            console.print(f"  Events:   {events:,}")
+            console.print(f"  Sessions: {sessions:,}")
+            console.print(f"  Analyzed: {analyzed:,}")
+        except Exception:
+            pass
+
+
+@cli.command()
+@click.argument("query_text")
+@click.option("--top-k", default=5, help="Number of results")
+def query(query_text, top_k):
+    """Semantic search over captured knowledge."""
+    import requests
+
+    config = load_config()
+    port = config["api"]["port"]
+
+    try:
+        resp = requests.get(
+            f"http://localhost:{port}/query",
+            params={"q": query_text, "top_k": top_k},
+            timeout=5,
+        )
+        data = resp.json()
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        console.print("[dim]Is capman running? Try: capman start[/dim]")
+        return
+
+    console.print(f'\n[bold]Query:[/bold] "{query_text}"')
+    console.print("─" * 60)
+
+    results = data.get("results", [])
+    if not results:
+        console.print("[dim]No results found.[/dim]")
+        return
+
+    for r in results:
+        rtype = r.get("type", "")
+        score = r.get("score", 0)
+        title = r.get("title", r.get("id", ""))
+        text = r.get("text", "")[:120]
+
+        color = "cyan" if rtype == "knowledge_node" else "blue"
+        label = "KNOWLEDGE" if rtype == "knowledge_node" else "SESSION"
+        console.print(f"\n[[{color}]{score:.2f}[/{color}]] [bold]{label}:[/bold] {title}")
+        if text:
+            console.print(f"  [dim]{text}...[/dim]")
+
+    console.print()
+
+
+if __name__ == "__main__":
+    cli()

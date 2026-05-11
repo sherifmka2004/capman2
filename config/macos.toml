@@ -1,0 +1,6 @@
+[sensors.keyboard]
+exclude_apps = ["1Password", "Keychain", "Signal", "Bitwarden", "Keychain Access"]
+
+[platform]
+ocr_backend = "apple_vision"
+window_backend = "nsworkspace"
