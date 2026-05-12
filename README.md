@@ -49,7 +49,7 @@ capman2 makes it persistent, searchable, and replayable. An LLM that has seen yo
 | `shell` | History watcher (`.bash_history`, `.zsh_history`) — passive fallback | macOS, Linux |
 | `shell_hook` | Real-time bash/zsh hook with command + exit code + duration + CWD + SSH/TTY context | macOS, Linux |
 | `filesystem` | File create/save/delete/rename **+ content diffs** — only files the *user* directly touched (editor / interactive shell / focused file manager), not build-tool/LSP/daemon churn. Git-aware diffs in repos. | macOS, Linux, Windows |
-| `capman-fsmon` | **Privileged deep monitor** (opt-in, needs root): true file *opens/reads* + the responsible **process** (PID/comm/exe/TTY), via fanotify (or auditd / eBPF fallback). POSTs to the daemon. See [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md). | Linux |
+| `capman-fsmon` | **Privileged deep monitor** (opt-in, needs root): true file *opens/reads* + the responsible **process** (PID/comm/exe/signing-id/TTY). Linux via fanotify (auditd/eBPF fallback); macOS via Endpoint Security `eslogger` (or `fs_usage`, needs Full Disk Access). POSTs to the daemon. See [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md). | Linux, macOS |
 | `browser_relay` | Tab lifecycle, URLs, search queries, page text (via extension) | Chrome, Firefox |
 | `documents` | Slide/page/sheet navigation with dwell times | macOS, Linux, Windows |
 
@@ -76,9 +76,9 @@ language servers, `npm install`, watchers, indexers, the capman daemon itself, �
 Attribution uses the focused window, recently-captured shell commands, and (with
 the privileged helper) the acting process's identity.
 
-Optionally enable **`capman-fsmon`** (Linux, root) to also capture true file
-*opens/reads* and the *responsible process* — see
-[docs/FILE_MONITORING.md](docs/FILE_MONITORING.md).
+Optionally enable **`capman-fsmon`** (root; Linux via fanotify/auditd/eBPF,
+macOS via Endpoint Security `eslogger`) to also capture true file *opens/reads*
+and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md).
 
 ---
 

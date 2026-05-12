@@ -18,6 +18,7 @@ def _settings():
     s = dict(fsmon._DEFAULTS)
     for k in ("open_recorders", "interactive_apps", "interactive_cli", "machine_procs"):
         s[k] = {fsmon._norm(x) for x in s[k]}
+    s["editor_signing_id_hints"] = {h.lower() for h in s.get("editor_signing_id_hints", [])}
     return s
 
 
@@ -132,6 +133,111 @@ def test_classify_python_script_no_tty_is_machine(monkeypatch):
     a = fsmon.Attributor(_settings())
     verdict, _ = a.classify(700)
     assert verdict == "machine"
+
+
+# --- macOS: classify_info (signing-id heuristic) ----------------------------
+
+def test_classify_info_editor_signing_id_is_user():
+    a = fsmon.Attributor(_settings())
+    # VS Code writes via "Code Helper" subprocesses signed as com.microsoft.VSCode
+    info = {"pid": 901, "comm": "Code Helper (Renderer)", "exe": "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Renderer).app/Contents/MacOS/Code Helper (Renderer)",
+            "cmdline": "", "tty": "", "ppid": 900, "signing_id": "com.microsoft.VSCode", "chain": []}
+    verdict, actor = a.classify_info(info)
+    assert verdict == "user"
+    assert actor["signing_id"] == "com.microsoft.vscode"
+    assert a.is_open_recorder(actor) is True
+
+
+def test_classify_info_unknown_signed_app_no_tty_is_unknown():
+    a = fsmon.Attributor(_settings())
+    info = {"pid": 902, "comm": "SomeAgent", "exe": "/Applications/SomeAgent.app/Contents/MacOS/SomeAgent",
+            "cmdline": "", "tty": "", "ppid": 1, "signing_id": "com.example.someagent", "chain": []}
+    verdict, _ = a.classify_info(info)
+    assert verdict == "unknown"
+
+
+def test_classify_info_terminal_child_with_tty_is_likely_user():
+    a = fsmon.Attributor(_settings())
+    info = {"pid": 903, "comm": "mytool", "exe": "/usr/local/bin/mytool", "cmdline": "mytool x",
+            "tty": "ttys003", "ppid": 800, "signing_id": "", "chain": ["zsh", "login"]}
+    verdict, _ = a.classify_info(info)
+    assert verdict == "likely_user"
+
+
+def test_classify_info_capman_in_chain_is_machine():
+    a = fsmon.Attributor(_settings())
+    info = {"pid": 904, "comm": "git", "exe": "/usr/bin/git", "cmdline": "git gc",
+            "tty": "ttys004", "ppid": 700, "signing_id": "", "chain": ["python3", "capman"]}
+    verdict, _ = a.classify_info(info)
+    assert verdict == "machine"
+
+
+# --- macOS: eslogger JSON extraction ----------------------------------------
+
+def test_es_extract_open():
+    msg = {"event": {"open": {"file": {"path": "/Users/u/code/proj/main.py"}}},
+           "process": {"executable": {"path": "/usr/bin/cat"}, "ppid": 501,
+                       "signing_id": "com.apple.cat", "audit_token": {"pid": 5050},
+                       "tty": {"path": "/dev/ttys003"}}}
+    kind, src, dst, info = fsmon._es_extract(msg)
+    assert kind == "file_open"
+    assert src == "/Users/u/code/proj/main.py"
+    assert info["pid"] == 5050
+    assert info["comm"] == "cat"
+    assert info["exe"] == "/usr/bin/cat"
+    assert info["signing_id"] == "com.apple.cat"
+    assert info["tty"] == "/dev/ttys003"
+
+
+def test_es_extract_close_modified_is_save():
+    msg = {"event": {"close": {"modified": True, "target": {"path": "/Users/u/code/proj/x.py"}}},
+           "process": {"executable": {"path": "/Applications/Visual Studio Code.app/Contents/MacOS/Electron"},
+                       "signing_id": "com.microsoft.VSCode", "audit_token": {"pid": 7}}}
+    kind, src, dst, info = fsmon._es_extract(msg)
+    assert kind == "file_save"
+    assert src == "/Users/u/code/proj/x.py"
+    assert info["signing_id"] == "com.microsoft.VSCode"
+
+
+def test_es_extract_close_not_modified_skipped():
+    msg = {"event": {"close": {"modified": False, "target": {"path": "/Users/u/x"}}}, "process": {}}
+    kind, *_ = fsmon._es_extract(msg)
+    assert kind is None
+
+
+def test_es_extract_rename():
+    msg = {"event": {"rename": {"source": {"path": "/Users/u/code/a.py"},
+                                "destination": {"existing_file": {"path": "/Users/u/code/b.py"}}}},
+           "process": {"executable": {"path": "/bin/mv"}, "audit_token": {"pid": 9}}}
+    kind, src, dst, info = fsmon._es_extract(msg)
+    assert kind == "file_rename"
+    assert src == "/Users/u/code/a.py"
+    assert dst == "/Users/u/code/b.py"
+    assert info["comm"] == "mv"
+
+
+def test_es_extract_rename_new_path_form():
+    msg = {"event": {"rename": {"source": {"path": "/Users/u/code/a.py"},
+                                "destination": {"new_path": {"dir": {"path": "/Users/u/code"}, "filename": "b.py"}}}},
+           "process": {"executable": {"path": "/bin/mv"}, "audit_token": [0, 0, 0, 0, 0, 12, 0, 0]}}
+    kind, src, dst, info = fsmon._es_extract(msg)
+    assert kind == "file_rename"
+    assert dst == "/Users/u/code/b.py"
+    assert info["pid"] == 12
+
+
+def test_es_extract_unlink():
+    msg = {"event": {"unlink": {"target": {"path": "/Users/u/code/old.py"}}},
+           "process": {"executable": {"path": "/bin/rm"}, "audit_token": {"pid": 3}}}
+    kind, src, dst, info = fsmon._es_extract(msg)
+    assert kind == "file_delete"
+    assert src == "/Users/u/code/old.py"
+
+
+def test_es_extract_unknown_event_returns_none():
+    msg = {"event": {"exec": {"target": {}}}, "process": {}}
+    kind, *_ = fsmon._es_extract(msg)
+    assert kind is None
 
 
 # --- PathFilter -------------------------------------------------------------

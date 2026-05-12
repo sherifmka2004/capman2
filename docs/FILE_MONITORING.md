@@ -7,7 +7,8 @@ constant background churn from build tools, package managers, language servers,
 file watchers, sync clients, indexers, or the capman daemon itself.
 
 There are two layers. Layer 1 is on by default and needs no special privileges.
-Layer 2 is opt-in, Linux-only, and needs root.
+Layer 2 is opt-in, needs root, and runs on Linux (fanotify/auditd/eBPF) or
+macOS (Endpoint Security via `eslogger`, or `fs_usage`).
 
 ---
 
@@ -86,7 +87,7 @@ interactive_apps          = [ ... ]   # editors / IDEs / terminals / file manage
 interactive_cli           = [ ... ]   # vim, nano, cp, mv, sed, tar, ...
 machine_procs             = [ ... ]   # node, tsc, cargo, pip, npm, lsp servers, git, ...
 
-deep_monitor              = "off"     # off | fanotify | audit | ebpf   (Layer 2)
+deep_monitor              = "off"     # Layer 2 — Linux: fanotify|audit|ebpf · macOS: eslogger|fs_usage
 deep_monitor_paths        = []        # defaults to watch_paths when empty
 ```
 
@@ -95,41 +96,47 @@ watch paths), set `user_only = false`.
 
 ---
 
-## Layer 2 — `capman-fsmon`: privileged deep monitor (opt-in, Linux, **root**)
+## Layer 2 — `capman-fsmon`: privileged deep monitor (opt-in, Linux + macOS, **root**)
 
 `watchdog` can see creates/modifies/deletes/renames but it **cannot** see file
 *opens/reads*, nor *which process* touched a file. `tools/capman-fsmon/fsmon.py`
 closes that gap using the kernel and POSTs the surviving events to the daemon's
 `/events` endpoint (`sensor_id: "fsmon"`), exactly like the browser extension.
-It uses the acting PID to attribute *authoritatively* — an editor or a
-TTY-attached file tool → `user`; a build tool / language server / daemon /
-capman → `machine` (dropped).
+It uses the acting process to attribute *authoritatively* — an editor (matched
+by process name **or code-signing identity**) or a TTY-attached file tool →
+`user`; a build tool / language server / daemon / capman → `machine` (dropped).
 
 Because file opens fire constantly (every `grep -r`, every LSP scan), `fsmon`
 only records `file_open` for clearly-interactive openers (`vim`, `cat`, `bat`,
-`less`, `code`, `subl`, GUI editors, …) and rate-limits/dedups per path. It does
-not read file contents — diffing stays in Layer 1.
+`less`, `code`, `subl`, GUI editors and editor-signed helper processes, …) and
+rate-limits/dedups per path. It does not read file contents — diffing stays in
+Layer 1.
 
 ### Backends
 
-| `deep_monitor` | Mechanism | Requirements |
-|---|---|---|
-| `fanotify` (preferred) | `fanotify_init` + `FAN_MARK_MOUNT` for `FAN_OPEN` & `FAN_CLOSE_WRITE` on the mounts containing your watch paths; PID from the event. | root / `CAP_SYS_ADMIN`, Linux ≥ 2.6.37 |
-| `audit` | `auditctl -w <path> -p rwxa -k capman_fsmon`, tail `/var/log/audit/audit.log`, translate `openat`/`write`/`unlinkat`/`renameat*` records. | root, `auditd` installed |
-| `ebpf` | `bpftrace tools/capman-fsmon/bpftrace/fileops.bt` (opensnoop-style), parse stdout. Least precise (relative paths not resolved). | root, `bpftrace`, recent kernel |
+| `deep_monitor` | OS | Mechanism | Requirements |
+|---|---|---|---|
+| `fanotify` (Linux default) | Linux | `fanotify_init` + `FAN_MARK_MOUNT` for `FAN_OPEN` & `FAN_CLOSE_WRITE` on the mounts containing your watch paths; PID from the event. | root / `CAP_SYS_ADMIN`, Linux ≥ 2.6.37 (blocked in unprivileged containers) |
+| `audit` | Linux | `auditctl -w <path> -p rwxa -k capman_fsmon`, tail `/var/log/audit/audit.log`, translate `openat`/`write`/`unlinkat`/`renameat*` records. | root, `auditd` |
+| `ebpf` | Linux | `bpftrace tools/capman-fsmon/bpftrace/fileops.bt` (opensnoop-style), parse stdout. Least precise (relative paths not resolved). | root, `bpftrace`, recent kernel |
+| `eslogger` (macOS default) | macOS | Streams **Endpoint Security** events via `/usr/bin/eslogger` (`open` / `create` / `close[modified]` / `rename` / `unlink`); each message carries the responsible process — executable path, pid, ppid, **signing id**, tty. | root **and Full Disk Access**, macOS 13+ |
+| `fs_usage` | macOS | Parse `fs_usage -w -f filesys` — opens / deletes / renames only (`file_save` comes from the in-daemon watchdog sensor). | root |
 
-`--backend auto` (the default) uses the `deep_monitor` value from your config,
-falling back to `fanotify`, then `audit`, then `ebpf`.
+`--backend auto` (the default) uses the `deep_monitor` value from your config if
+it's valid for the current OS, else picks the OS default (`fanotify` on Linux,
+`eslogger` on macOS) and falls back through the rest. So leaving
+`deep_monitor = "fanotify"` is fine — on macOS `fsmon --backend auto` will use
+`eslogger` instead.
 
-### Enable it
+### Enable it — Linux
 
 1. Set `deep_monitor = "fanotify"` (or `audit` / `ebpf`) in
-   `config/default.toml` → `[sensors.filesystem]`. `capman start` will then
-   print the exact command to run the helper.
+   `config/default.toml` → `[sensors.filesystem]`. `capman start` then prints
+   the command to run the helper.
 2. Run the helper as root, alongside the (user-owned) daemon:
    ```bash
    sudo python3 tools/capman-fsmon/fsmon.py --backend auto
-   # or specify everything explicitly:
+   # or explicitly:
    sudo python3 tools/capman-fsmon/fsmon.py --backend fanotify \
         --api http://127.0.0.1:7331 --paths ~/code ~/projects
    ```
@@ -142,21 +149,50 @@ falling back to `fanotify`, then `audit`, then `ebpf`.
    journalctl -u capman-fsmon -f
    ```
 
+### Enable it — macOS
+
+1. Set `deep_monitor = "eslogger"` in `[sensors.filesystem]` (or leave
+   `"fanotify"` — `--backend auto` self-corrects on macOS).
+2. **Grant Full Disk Access** to the Python interpreter you'll run `fsmon.py`
+   with (e.g. your capman venv's `python3`, or `/usr/bin/python3`):
+   System Settings → Privacy & Security → Full Disk Access → add it. Without
+   this, `eslogger` produces no events.
+3. Run it as root:
+   ```bash
+   sudo /path/to/capman2/.venv/bin/python3 tools/capman-fsmon/fsmon.py --backend auto
+   # (auto falls back to fs_usage if eslogger is unavailable)
+   ```
+   Or install the LaunchDaemon:
+   ```bash
+   sudo cp tools/capman-fsmon/com.capman.fsmon.plist /Library/LaunchDaemons/
+   sudo nano /Library/LaunchDaemons/com.capman.fsmon.plist   # fix paths + HOME
+   sudo launchctl load -w /Library/LaunchDaemons/com.capman.fsmon.plist
+   log stream --predicate 'process == "fsmon.py"'
+   ```
+
+> **The "real" ES System Extension** — a production-grade Endpoint Security
+> client (a code-signed `.systemextension` with the
+> `com.apple.developer.endpoint-security.client` entitlement, which Apple grants
+> on request) is out of scope here. `eslogger` is Apple's own already-entitled
+> CLI and delivers the same events with far less ceremony — the right tool for a
+> personal capture engine.
+
 The daemon does **not** spawn `fsmon` itself (it would need root) — it only
-prints the recommended command. Stop it with `Ctrl+C` or `systemctl stop
-capman-fsmon`.
+prints the recommended command. Stop it with `Ctrl+C`, `systemctl stop
+capman-fsmon`, or `launchctl unload …`.
 
 ### Trade-offs
 
-- **Privilege** — fanotify/audit/eBPF all require root. If that's not acceptable,
-  stay on Layer 1; you still get edits + diffs + attribution, just not reads or
-  process names.
+- **Privilege** — every Layer 2 backend needs root, and `eslogger` also needs
+  Full Disk Access. If that's not acceptable, stay on Layer 1; you still get
+  edits + diffs + attribution, just not reads or process names.
 - **Volume** — opens are frequent. The interactive-opener allowlist + per-path
   dedup (`dedup_window_s`, default 30 s) + global rate cap (`rate_cap` per
   `rate_window_s`) keep it sane; if you still see noise, trim `open_recorders`.
-- **Coverage** — fanotify classic mode watches whole *mounts* and we filter by
-  path prefix; deletes/renames are handled by Layer 1 (fanotify dirent events
-  need newer kernels + `FAN_REPORT_FID`, not used here).
+- **Coverage** — Linux `fanotify` watches whole *mounts* (we filter by path
+  prefix) and deletes/renames there fall back to Layer 1; macOS `fs_usage`
+  doesn't carry write paths, so `file_save` there comes from Layer 1; `eslogger`
+  covers all of open/create/close/rename/unlink with the process attached.
 
 ---
 
@@ -176,12 +212,15 @@ sqlite3 ~/.capman/timeline.db "
 # then check there are no file_save/code_diff rows for node_modules/**, and the
 # daemon log shows `dropped_machine` rising.
 
-# Layer 2 — with fsmon running as root, `cat ~/code/somefile.py` in a terminal:
+# Layer 2 — with fsmon running as root (Linux: sudo … --backend auto;
+# macOS: sudo … --backend auto, after granting Full Disk Access), then
+# `cat ~/code/somefile.py` in a terminal:
 sqlite3 ~/.capman/timeline.db "
   SELECT type, json_extract(payload,'$.path'),
          json_extract(payload,'$.actor')
   FROM events WHERE sensor_id='fsmon' ORDER BY ts DESC LIMIT 10;"
-# → a file_open row with actor.comm='cat', a pid, and attribution='user'.
+# → a file_open row with actor.comm='cat', a pid, and attribution='user'
+#   (on macOS the actor also carries the signing_id).
 ```
 
 Ask the chatbot UI: *"what files did I change in the last hour, and what did I

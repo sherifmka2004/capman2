@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  capman2 deep file monitor — macOS LaunchDaemon (runs as root, system-wide).
+
+  Install:
+    sudo cp tools/capman-fsmon/com.capman.fsmon.plist /Library/LaunchDaemons/
+    sudo nano /Library/LaunchDaemons/com.capman.fsmon.plist     # fix the paths below
+    # Grant Full Disk Access to the python binary used in ProgramArguments:
+    #   System Settings → Privacy & Security → Full Disk Access → add it
+    sudo launchctl load -w /Library/LaunchDaemons/com.capman.fsmon.plist
+    log stream --predicate 'process == "fsmon.py"'              # watch it (or check stdout/err files)
+
+  It POSTs events to the capman daemon's /events endpoint (default
+  http://127.0.0.1:7331), which the daemon (running as your user) ingests.
+  Default backend = the [sensors.filesystem].deep_monitor value in your config
+  (eslogger on macOS); override with --backend eslogger|fs_usage.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.capman.fsmon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- EDIT: use the python from your capman venv (so `capman.config` is importable),
+             or /usr/bin/python3 if you only need standalone defaults. -->
+        <string>/Users/CHANGEME/capman2/.venv/bin/python3</string>
+        <string>/Users/CHANGEME/capman2/tools/capman-fsmon/fsmon.py</string>
+        <string>--backend</string>
+        <string>auto</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/CHANGEME/capman2</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- EDIT: the home dir whose ~/.capman the daemon uses (so file_snapshots/** etc. are excluded). -->
+        <key>HOME</key>
+        <string>/Users/CHANGEME</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/capman-fsmon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/capman-fsmon.err</string>
+</dict>
+</plist>

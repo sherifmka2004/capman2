@@ -87,8 +87,11 @@ machine_procs = [
   "capman", "uvicorn", "gunicorn", "chromedriver",
 ]
 
-# --- deep monitor (privileged Linux helper: tools/capman-fsmon) ---
-# off | fanotify | audit | ebpf  — see docs/FILE_MONITORING.md. Needs root.
+# --- deep monitor (privileged helper: tools/capman-fsmon) — captures file *opens/reads*
+#     + the responsible process. Needs root (and Full Disk Access on macOS).
+#       Linux:  fanotify | audit | ebpf      macOS: eslogger | fs_usage
+#       "off" disables it; any unrecognized value (incl. "fanotify" on macOS) is
+#       treated as "auto" by `capman-fsmon --backend auto`. See docs/FILE_MONITORING.md.
 deep_monitor = "fanotify"
 deep_monitor_paths = []   # defaults to watch_paths when empty
 

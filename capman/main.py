@@ -118,8 +118,10 @@ async def _run_daemon(config: dict) -> None:
         from pathlib import Path as _P
         helper = _P(__file__).resolve().parents[1] / "tools" / "capman-fsmon" / "fsmon.py"
         console.print(f"  Deep FS:   [yellow]deep_monitor={deep}[/yellow] — start the privileged helper separately:")
-        console.print(f"             [dim]sudo python3 {helper} --backend {deep}[/dim]")
-        logger.info("deep_monitor=%s configured; run helper: sudo python3 %s --backend %s", deep, helper, deep)
+        console.print(f"             [dim]sudo python3 {helper} --backend auto[/dim]")
+        if sys.platform == "darwin":
+            console.print("             [dim](macOS: backend=eslogger needs Full Disk Access; see docs/FILE_MONITORING.md)[/dim]")
+        logger.info("deep_monitor=%s configured; run helper: sudo python3 %s --backend auto", deep, helper)
     else:
         logger.debug("deep_monitor disabled (file opens/reads + PID attribution not captured)")
 
