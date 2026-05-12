@@ -156,19 +156,46 @@ async def _run_daemon(config: dict) -> None:
 
 
 async def _start_api_server(config: dict, db) -> None:
+    """
+    Start uvicorn — runs HTTP on the configured port AND HTTPS on port+1.
+    HTTPS uses an auto-generated self-signed cert (cached after first start).
+
+    Why HTTPS too? Browsers block plain-HTTP requests from HTTPS pages
+    (mixed content). Without HTTPS we can't capture interactions from sites
+    like openrouter.ai, github.com, claude.ai, etc.
+    """
     try:
         import uvicorn
         from capman.api.server import create_app
+        from capman.api.tls import ensure_tls_cert
+
         app = create_app(config, db)
-        server_config = uvicorn.Config(
-            app,
-            host=config["api"]["host"],
-            port=config["api"]["port"],
-            log_level="info",
-            access_log=True,
-        )
-        server = uvicorn.Server(server_config)
-        await server.serve()
+        host = config["api"]["host"]
+        http_port = config["api"]["port"]
+        https_port = config["api"].get("https_port", http_port + 1)
+
+        data_dir = get_data_dir(config)
+        cert_path, key_path = ensure_tls_cert(data_dir, host)
+
+        # Spin up both servers in parallel
+        servers = []
+        http_cfg = uvicorn.Config(app, host=host, port=http_port,
+                                   log_level="info", access_log=True)
+        servers.append(asyncio.create_task(uvicorn.Server(http_cfg).serve()))
+        console.print(f"  HTTP:      [cyan]http://{host}:{http_port}[/cyan]")
+
+        if cert_path and key_path:
+            https_cfg = uvicorn.Config(app, host=host, port=https_port,
+                                        log_level="info", access_log=True,
+                                        ssl_certfile=str(cert_path),
+                                        ssl_keyfile=str(key_path))
+            servers.append(asyncio.create_task(uvicorn.Server(https_cfg).serve()))
+            console.print(f"  HTTPS:     [cyan]https://{host}:{https_port}[/cyan]  (self-signed cert)")
+            logger.info("HTTPS server live on port %d (cert: %s)", https_port, cert_path)
+        else:
+            console.print("  [yellow]HTTPS disabled[/yellow] — install 'cryptography' for HTTPS support")
+
+        await asyncio.gather(*servers, return_exceptions=True)
     except Exception as e:
         logger.warning("API server failed to start: %s", e)
 
