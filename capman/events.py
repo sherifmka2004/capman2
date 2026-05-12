@@ -40,6 +40,11 @@ class EventType(str, Enum):
     CODE_DIFF        = "code_diff"         # File diff after save (before/after content)
     ERROR_DETECTED   = "error_detected"    # Stack trace or error message in output
     AI_CONVERSATION  = "ai_conversation"   # Captured ChatGPT/Claude/etc. exchange
+    # In-page interaction events (from browser extension)
+    USER_CLICK       = "user_click"        # Click on a button/link/element
+    FORM_INPUT       = "form_input"        # Text typed into an input field
+    FORM_SUBMIT      = "form_submit"       # Form submission
+    DOM_MUTATION     = "dom_mutation"      # Significant DOM change (modal opened, etc.)
 
 
 def _new_id() -> str:

@@ -19,6 +19,12 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["interactions.js"],
+      "run_at": "document_start",
+      "all_frames": false
     }
   ],
   "action": {

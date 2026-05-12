@@ -313,4 +313,37 @@ def build_event_narrative(session) -> str:
             nb_str = f" [{notebook}]" if notebook else ""
             lines.append(f"{prefix} NOTE    | {app:<12} | opened \"{note}\"{nb_str}")
 
+        elif etype == EventType.USER_CLICK:
+            el = p.get("element", {}) or {}
+            text = el.get("text", "")[:50] or el.get("aria", "")[:50]
+            tag = el.get("tag", "")
+            href = el.get("href", "")
+            target = f' "{text}"' if text else ""
+            extra = f" → {href[:60]}" if href else ""
+            lines.append(f"{prefix} CLICK   | {app:<12} | {tag}{target}{extra}")
+
+        elif etype == EventType.FORM_INPUT:
+            el = p.get("element", {}) or {}
+            name = el.get("name", "") or el.get("id", "") or el.get("aria", "")
+            val = p.get("value", "")[:60]
+            lines.append(f"{prefix} INPUT   | {app:<12} | {name}={val!r}")
+
+        elif etype == EventType.FORM_SUBMIT:
+            action = (p.get("action", "") or "")[:60]
+            fields = p.get("fields", []) or []
+            field_summary = ", ".join(
+                f"{f.get('name','?')}={'[REDACTED]' if f.get('value') == '[REDACTED]' else (str(f.get('value',''))[:30])}"
+                for f in fields[:5]
+            )
+            lines.append(f"{prefix} SUBMIT  | {app:<12} | → {action}  [{field_summary}]")
+
+        elif etype == EventType.DOM_MUTATION:
+            kind = p.get("kind", "")
+            if kind == "iframe_appeared":
+                host = p.get("host", "")
+                lines.append(f"{prefix} IFRAME  | {app:<12} | {host} loaded (likely 3rd-party widget)")
+            elif kind == "modal_opened":
+                text = (p.get("text", "") or "")[:60]
+                lines.append(f"{prefix} MODAL   | {app:<12} | {text}")
+
     return "\n".join(lines) if lines else "(no significant events recorded)"
