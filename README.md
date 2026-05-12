@@ -48,7 +48,8 @@ capman2 makes it persistent, searchable, and replayable. An LLM that has seen yo
 | `screenshot` | Periodic + event-triggered screenshots with OCR | macOS, Linux, Windows |
 | `shell` | History watcher (`.bash_history`, `.zsh_history`) — passive fallback | macOS, Linux |
 | `shell_hook` | Real-time bash/zsh hook with command + exit code + duration + CWD + SSH/TTY context | macOS, Linux |
-| `filesystem` | File open/save/close events via watchdog | macOS, Linux, Windows |
+| `filesystem` | File create/save/delete/rename **+ content diffs** — only files the *user* directly touched (editor / interactive shell / focused file manager), not build-tool/LSP/daemon churn. Git-aware diffs in repos. | macOS, Linux, Windows |
+| `capman-fsmon` | **Privileged deep monitor** (opt-in, needs root): true file *opens/reads* + the responsible **process** (PID/comm/exe/TTY), via fanotify (or auditd / eBPF fallback). POSTs to the daemon. See [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md). | Linux |
 | `browser_relay` | Tab lifecycle, URLs, search queries, page text (via extension) | Chrome, Firefox |
 | `documents` | Slide/page/sheet navigation with dwell times | macOS, Linux, Windows |
 
@@ -62,6 +63,22 @@ Supported apps:
 - **Spreadsheets**: Excel, Numbers, LibreOffice Calc
 - **Notes**: Apple Notes, OneNote, Obsidian, Evernote, Notion
 - **PDFs**: Preview, Acrobat, Evince, Zathura
+
+### File Operations — *only what you actually did*
+
+The `filesystem` sensor records when **you** create, edit, rename or delete files
+under your watch paths, and for text files it captures a **unified diff of what
+changed** (snapshot-based, or `git diff` when the file is in a repo). The catch
+that makes it useful: it attributes every file op and only keeps the ones driven
+by **direct user action** — an editor/IDE, an interactive shell command, a focused
+file manager — and drops the firehose of background churn (webpack/tsc/cargo,
+language servers, `npm install`, watchers, indexers, the capman daemon itself, …).
+Attribution uses the focused window, recently-captured shell commands, and (with
+the privileged helper) the acting process's identity.
+
+Optionally enable **`capman-fsmon`** (Linux, root) to also capture true file
+*opens/reads* and the *responsible process* — see
+[docs/FILE_MONITORING.md](docs/FILE_MONITORING.md).
 
 ---
 
@@ -278,6 +295,24 @@ capman status
 #   Sessions: 23
 #   Analyzed: 21
 ```
+
+### Storage usage
+
+```bash
+capman storage
+# capman2 storage  —  ~/.capman
+#   Total: 8.1 MB  (298 files)
+#   Growth: ~1.4 MB/day  (~41.2 MB/month, over 5.9 days)
+#   ┌ Component ──────────────┬─ Size ──┬─ % ──┬ Files ┐
+#   │ Vector store (ChromaDB) │  6.4 MB │ 79%  │     6 │
+#   │ Timeline DB (SQLite)    │  1.3 MB │ 16%  │     3 │
+#   │ Screenshots             │   ...   │ ...  │   ... │
+#   └─────────────────────────┴─────────┴──────┴───────┘
+```
+
+Also available as `GET /storage` (JSON) and as the **💾 Storage** tab in the
+web UI — full breakdown by component, DB row counts, events-by-type, and a
+growth estimate.
 
 ### Query your knowledge
 

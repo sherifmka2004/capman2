@@ -29,7 +29,68 @@ output_max_bytes = 4096
 
 [sensors.filesystem]
 watch_paths = ["~/Desktop", "~/Downloads", "~/Documents", "~/code", "~/projects"]
-extensions = [".py", ".js", ".ts", ".tsx", ".go", ".rs", ".md", ".json", ".yaml", ".toml", ".sh", ".sql"]
+# `extensions` gates *content diff* capture (CODE_DIFF events) — metadata events
+# (open/save/delete/rename) are emitted for any file, subject to the filters below.
+extensions = [".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".md", ".json", ".yaml", ".yml", ".toml", ".sh", ".sql", ".html", ".css", ".c", ".h", ".cpp", ".java", ".rb", ".php", ".txt", ".ini", ".cfg", ".env", ".tf", ".proto", ".vue", ".svelte"]
+# Paths/names never recorded ("**/X/**" = exclude any dir segment matching X)
+exclude = [
+  "**/.git/**", "**/node_modules/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**",
+  "**/.*cache/**", "**/.next/**", "**/dist/**", "**/build/**", "**/target/**", "**/.cache/**",
+  "**/.idea/**", "**/.vscode/**", "**/.tox/**", "**/coverage/**", "**/.nyc_output/**",
+  "*.pyc", "*.pyo", "*.lock", "*.swp", "*.swpx", "*.swx", "*~", ".#*", "4913",
+  "*.tmp", "*.temp", "*.crdownload", "*.part", "*.partial",
+]
+# Coalesce a burst of writes to the same file into one FILE_SAVE.
+debounce_ms = 1200
+capture_diffs = true
+diff_max_bytes = 1048576
+snapshot_dir = "~/.capman/file_snapshots"
+
+# --- direct-user-action attribution ---
+# When true, only record file ops attributable to the user (editor / interactive
+# shell command / focused file manager) — drop background churn from build tools,
+# language servers, watchers, package managers, daemons, and capman itself.
+user_only = true
+# If true, keep file ops with no attribution signal (treat as "likely_user").
+keep_unknown = false
+# Grace window (s) between a user action and the filesystem event landing.
+foreground_window_grace_s = 4
+# A watchdog event "counts" if a matching interactive shell command ran this recently.
+shell_correlate_s = 8
+interactive_apps = [
+  "code", "code - insiders", "cursor", "vscodium", "vim", "nvim", "neovim", "emacs",
+  "nano", "micro", "helix", "sublime_text", "sublime text", "gedit", "kate", "kwrite",
+  "geany", "idea", "intellij idea", "pycharm", "goland", "webstorm", "rubymine", "clion",
+  "xcode", "textedit", "obsidian", "typora", "notepad++",
+  "finder", "nautilus", "files", "dolphin", "thunar", "nemo", "pcmanfm", "caja",
+  "kitty", "alacritty", "wezterm", "ghostty", "terminal", "iterm2", "iterm",
+  "gnome-terminal", "konsole", "xterm", "urxvt", "terminator", "tilix", "windows terminal",
+  "hyper", "warp",
+]
+interactive_cli = [
+  "vim", "nvim", "vi", "view", "emacs", "emacsclient", "nano", "micro", "helix", "hx",
+  "ed", "ex", "cat", "bat", "less", "more", "head", "tail", "sed", "awk", "perl",
+  "cp", "mv", "rm", "rmdir", "touch", "mkdir", "ln", "tee", "truncate", "dd",
+  "tar", "unzip", "zip", "gzip", "gunzip", "bzip2", "xz", "7z", "rsync",
+  "code", "subl", "open", "xdg-open", "gio", "shred", "install", "patch",
+]
+machine_procs = [
+  "node", "deno", "bun", "webpack", "esbuild", "swc", "tsc", "tsserver", "vite", "next",
+  "next-server", "rollup", "parcel", "turbo", "nx", "ng", "cargo", "rustc", "rust-analyzer",
+  "gofmt", "gopls", "pip", "pip3", "uv", "poetry", "pdm", "pipenv", "conda", "mamba", "hatch",
+  "npm", "yarn", "pnpm", "npx", "corepack", "pyright", "pylsp", "ruff", "black", "mypy",
+  "flake8", "typescript-language-server", "eslint", "gradle", "mvn", "maven", "make", "cmake",
+  "ninja", "meson", "bazel", "ccache", "git", "hg", "svn", "rclone", "borg", "restic",
+  "systemd", "systemd-journald", "cron", "crond", "updatedb", "mlocate", "plocate",
+  "tracker-miner-fs", "tracker-extract", "baloo_file", "mds", "mds_stores", "mdworker",
+  "mdworker_shared", "fseventsd", "dropbox", "onedrive", "syncthing", "nextcloud",
+  "capman", "uvicorn", "gunicorn", "chromedriver",
+]
+
+# --- deep monitor (privileged Linux helper: tools/capman-fsmon) ---
+# off | fanotify | audit | ebpf  — see docs/FILE_MONITORING.md. Needs root.
+deep_monitor = "off"
+deep_monitor_paths = []   # defaults to watch_paths when empty
 
 [sensors.browser_relay]
 port = 7331

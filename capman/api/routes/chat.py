@@ -188,6 +188,56 @@ async def _build_context(question: str, request: Request) -> str:
         except Exception as e:
             logger.debug("Commands fetch skipped: %s", e)
 
+    # 6a. Recent file activity (files the user directly opened / changed / deleted)
+    if db:
+        try:
+            async with db._db.execute(
+                """SELECT type, payload, ts FROM events
+                   WHERE type IN ('file_open','file_save','file_delete','file_rename','code_diff')
+                   ORDER BY ts DESC LIMIT 60"""
+            ) as cur:
+                rows = await cur.fetchall()
+            if rows:
+                lines = []
+                seen_diff: set = set()
+                for r in rows:
+                    p = json.loads(r["payload"])
+                    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["ts"]))
+                    attr = p.get("attribution", "")
+                    actor = p.get("actor", {}) or {}
+                    who = actor.get("app") or actor.get("comm") or ""
+                    via = p.get("via_command", "")
+                    t = r["type"]
+                    if t == "code_diff":
+                        path = p.get("path", "")
+                        key = (path, p.get("lines_added"), p.get("lines_removed"))
+                        if key in seen_diff:
+                            continue
+                        seen_diff.add(key)
+                        repo = f" [{p['repo']}]" if p.get("repo") else ""
+                        lines.append(f"  [{when}] CHANGED {path}{repo}  (+{p.get('lines_added',0)}/-{p.get('lines_removed',0)})"
+                                     + (f"  via `{who}`" if who else ""))
+                        diff_txt = (p.get("diff", "") or "").strip()
+                        if diff_txt:
+                            for dl in diff_txt.splitlines()[:12]:
+                                lines.append(f"      {dl[:120]}")
+                    elif t == "file_rename":
+                        lines.append(f"  [{when}] RENAMED {p.get('src_path','')} → {p.get('dest_path','')}"
+                                     + (f"  via `{who}`" if who else ""))
+                    elif t == "file_delete":
+                        lines.append(f"  [{when}] DELETED {p.get('path','')}" + (f"  via `{who}`" if who else ""))
+                    elif t == "file_open":
+                        lines.append(f"  [{when}] OPENED  {p.get('path','')}" + (f"  via `{who}`" if who else ""))
+                    else:  # file_save
+                        extra = f"  via `{who}`" if who else ""
+                        if via:
+                            extra += f"  (cmd: {via[:60]})"
+                        lines.append(f"  [{when}] SAVED   {p.get('path','')}{extra}")
+                if lines:
+                    sections.append("## Recent File Activity (user-driven file opens / edits / deletes)\n" + "\n".join(lines[:120]))
+        except Exception as e:
+            logger.debug("File activity fetch skipped: %s", e)
+
     # 6b. Semantically relevant page chunks (vector search on embedded page text)
     try:
         from capman.storage.vector import VectorStore

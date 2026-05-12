@@ -140,10 +140,10 @@ class SessionAnalyzer:
             urls_visited=json.dumps(session.urls_visited[:15]),
             commands_run=json.dumps(session.commands_run[:10]),
             files=json.dumps([
-                e.payload.get("path", "")
+                (e.payload.get("path") or e.payload.get("dest_path") or "")
                 for e in session.events
-                if e.type.value in ("file_open", "file_save")
-            ][:10]),
+                if e.type.value in ("file_open", "file_save", "file_delete", "file_rename", "code_diff")
+            ][:15]),
         )
         return await self._call_llm(self._pass1_model, prompt)
 

@@ -111,6 +111,18 @@ async def _run_daemon(config: dict) -> None:
     sensor_names = [cls.sensor_id for cls in sensor_classes]
     logger.info("Sensors enabled: %s", ", ".join(sensor_names))
     console.print(f"  Sensors:   {', '.join(sensor_names)}")
+
+    # Deep file monitor (privileged helper) status hint
+    deep = config.get("sensors", {}).get("filesystem", {}).get("deep_monitor", "off")
+    if deep and deep != "off":
+        from pathlib import Path as _P
+        helper = _P(__file__).resolve().parents[1] / "tools" / "capman-fsmon" / "fsmon.py"
+        console.print(f"  Deep FS:   [yellow]deep_monitor={deep}[/yellow] — start the privileged helper separately:")
+        console.print(f"             [dim]sudo python3 {helper} --backend {deep}[/dim]")
+        logger.info("deep_monitor=%s configured; run helper: sudo python3 %s --backend %s", deep, helper, deep)
+    else:
+        logger.debug("deep_monitor disabled (file opens/reads + PID attribution not captured)")
+
     console.print(f"[bold green]Running...[/bold green] (Ctrl+C to stop)\n")
 
     # Setup sensors
@@ -253,6 +265,42 @@ def status():
             console.print(f"  Analyzed: {analyzed:,}")
         except Exception:
             pass
+
+
+@cli.command()
+def storage():
+    """Show how much disk capman2 is using, broken down by component."""
+    config = load_config()
+    from capman.api.routes.storage import compute_storage
+    r = compute_storage(config)
+
+    console.print(f"\n[bold]capman2 storage[/bold]  —  {config.get('core', {}).get('data_dir', '~/.capman')}")
+    console.print(f"  Total: [bold cyan]{r['total_human']}[/bold cyan]  ({r['total_files']:,} files)")
+    if r.get("estimated_per_day_human"):
+        console.print(f"  Growth: ~{r['estimated_per_day_human']}/day  (~{r['estimated_per_month_human']}/month, over {r['span_days']} days)")
+    console.print("─" * 60)
+    table = Table(show_header=True, header_style="dim")
+    table.add_column("Component")
+    table.add_column("Size", justify="right")
+    table.add_column("%", justify="right")
+    table.add_column("Files", justify="right")
+    for c in r["components"]:
+        if c["bytes"] == 0:
+            continue
+        table.add_row(c["name"], c["human"], f"{c['pct']}%", f"{c['files']:,}")
+    console.print(table)
+
+    db = r.get("db", {})
+    if db:
+        bits = []
+        for k, label in [("events", "events"), ("sessions", "sessions"), ("session_analyses", "analyses"),
+                         ("playbooks", "playbooks"), ("knowledge_triples", "facts"),
+                         ("knowledge_gaps", "gaps"), ("screenshots", "screenshots")]:
+            if db.get(k) is not None:
+                bits.append(f"{db[k]:,} {label}")
+        if bits:
+            console.print(f"  DB: {' · '.join(bits)}")
+    console.print()
 
 
 @cli.command()

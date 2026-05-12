@@ -299,6 +299,7 @@ CHAT_HTML = """<!DOCTYPE html>
   <div class="tab" data-view="playbooks">📘 Playbooks <span class="tab-count" id="count-playbooks">0</span></div>
   <div class="tab" data-view="gaps">🎯 Knowledge Gaps <span class="tab-count" id="count-gaps">0</span></div>
   <div class="tab" data-view="sessions">📅 Sessions <span class="tab-count" id="count-sessions">0</span></div>
+  <div class="tab" data-view="storage">💾 Storage <span class="tab-count" id="count-storage">—</span></div>
   <div class="tab" data-view="context">⚡ Context Suggest</div>
 </div>
 
@@ -347,6 +348,13 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
   </div>
 </div>
 
+<!-- Storage view -->
+<div class="view hidden" id="view-storage">
+  <div id="storage-body" style="padding:20px;max-width:900px;margin:0 auto">
+    <div class="empty">Loading storage usage...</div>
+  </div>
+</div>
+
 <!-- Context Suggest view -->
 <div class="view hidden" id="view-context">
   <div class="context-input">
@@ -376,6 +384,7 @@ const loaders = {
   playbooks: loadPlaybooks,
   gaps:      loadGaps,
   sessions:  loadSessions,
+  storage:   loadStorage,
 };
 const loaded = {};
 tabs.forEach(tab => {
@@ -561,6 +570,78 @@ function loadSessions() {
     });
 }
 
+// ====================================================================
+// Storage tab
+// ====================================================================
+const STORAGE_COLORS = ['#3b82f6','#8b5cf6','#ec4899','#f59e0b','#10b981','#06b6d4','#ef4444','#6b7280','#84cc16','#a855f7'];
+function loadStorage() {
+  const body = document.getElementById('storage-body');
+  body.innerHTML = '<div class="empty">Loading storage usage...</div>';
+  fetch('/storage').then(r => r.json()).then(d => {
+    document.getElementById('count-storage').textContent = d.total_human || '?';
+    const comps = (d.components || []).filter(c => c.bytes > 0);
+    let html = '';
+    html += `<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+      <span style="font-size:28px;font-weight:700;color:#fff">${escapeHtml(d.total_human || '0 B')}</span>
+      <span style="color:#888">total on disk · ${(d.total_files||0).toLocaleString()} files · ${escapeHtml(d.data_dir||'')}</span>
+      <button id="storage-refresh" style="margin-left:auto;background:#1e1e1e;border:1px solid #333;color:#bbb;border-radius:4px;padding:4px 10px;cursor:pointer">↻ Refresh</button></div>`;
+    if (d.estimated_per_day_human) {
+      html += `<div style="color:#999;margin-bottom:16px">Growth ≈ <b style="color:#ddd">${escapeHtml(d.estimated_per_day_human)}/day</b> (~${escapeHtml(d.estimated_per_month_human||'?')}/month), measured over ${d.span_days} days.</div>`;
+    } else {
+      html += `<div style="color:#999;margin-bottom:16px">Not enough history yet for a growth estimate.</div>`;
+    }
+    // stacked bar
+    html += `<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid #222;margin-bottom:8px">`;
+    comps.forEach((c, i) => {
+      const w = Math.max(d.total_bytes ? (100*c.bytes/d.total_bytes) : 0, 0);
+      html += `<div title="${escapeHtml(c.name)}: ${escapeHtml(c.human)} (${c.pct}%)" style="width:${w}%;background:${STORAGE_COLORS[i % STORAGE_COLORS.length]}"></div>`;
+    });
+    html += `</div>`;
+    // legend / table
+    html += `<table style="width:100%;border-collapse:collapse;margin-top:12px">`;
+    comps.forEach((c, i) => {
+      html += `<tr style="border-bottom:1px solid #1a1a1a">
+        <td style="padding:6px 8px;width:14px"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${STORAGE_COLORS[i % STORAGE_COLORS.length]}"></span></td>
+        <td style="padding:6px 8px;color:#ddd">${escapeHtml(c.name)}</td>
+        <td style="padding:6px 8px;color:#888;font-size:12px;font-family:monospace">${escapeHtml(c.path||'')}</td>
+        <td style="padding:6px 8px;color:#888;text-align:right">${(c.files||0).toLocaleString()} files</td>
+        <td style="padding:6px 8px;color:#fff;text-align:right;font-weight:600">${escapeHtml(c.human)}</td>
+        <td style="padding:6px 8px;color:#888;text-align:right;width:48px">${c.pct}%</td>
+      </tr>`;
+    });
+    html += `</table>`;
+    // DB internals
+    const db = d.db || {};
+    html += `<h3 style="margin:24px 0 8px;color:#fff;font-size:14px">Database contents</h3>`;
+    html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">`;
+    const dbItems = [
+      ['events','events'],['sessions','sessions'],['session_analyses','analyses'],
+      ['playbooks','playbooks'],['knowledge_triples','knowledge facts'],
+      ['knowledge_gaps','knowledge gaps'],['screenshots','screenshots'],
+    ];
+    dbItems.forEach(([k,label]) => {
+      if (db[k] != null) html += `<span style="background:#161616;border:1px solid #2a2a2a;border-radius:6px;padding:6px 10px;color:#ccc"><b style="color:#fff">${(db[k]).toLocaleString()}</b> ${label}</span>`;
+    });
+    html += `</div>`;
+    const et = d.event_types || [];
+    if (et.length) {
+      const max = et[0].count || 1;
+      html += `<h3 style="margin:18px 0 8px;color:#fff;font-size:14px">Events by type</h3>`;
+      et.forEach(e => {
+        const w = Math.max(2, 100 * e.count / max);
+        html += `<div style="display:flex;align-items:center;gap:10px;margin:3px 0">
+          <span style="width:170px;color:#aaa;font-size:12px;text-align:right">${escapeHtml(e.type)}</span>
+          <div style="flex:1;background:#141414;border-radius:3px;overflow:hidden"><div style="height:14px;width:${w}%;background:#3b82f6"></div></div>
+          <span style="width:64px;color:#ddd;font-size:12px">${(e.count).toLocaleString()}</span>
+        </div>`;
+      });
+    }
+    body.innerHTML = html;
+    const rb = document.getElementById('storage-refresh');
+    if (rb) rb.addEventListener('click', loadStorage);
+  }).catch(e => { body.innerHTML = '<div class="empty">Could not load storage info: ' + escapeHtml(String(e)) + '</div>'; });
+}
+
 function openSession(id) {
   fetch('/sessions/' + id)
     .then(r => r.json())
@@ -592,6 +673,37 @@ function openSession(id) {
         }
       } else {
         html += `<p style="color:#888"><em>Not yet analyzed</em></p>`;
+      }
+      const fa = d.file_activity || [];
+      if (fa.length) {
+        html += `<h3>File Activity <span style="color:#666;font-weight:400">(${fa.length} ops — user-driven)</span></h3>`;
+        fa.forEach(f => {
+          const t = new Date(f.ts * 1000).toLocaleTimeString();
+          const who = f.actor ? ` <span style="color:#888">via ${escapeHtml(f.actor)}</span>` : '';
+          if (f.type === 'code_diff') {
+            const repo = f.repo ? ` [${escapeHtml(f.repo)}]` : '';
+            html += `<div class="step-card">
+              <div class="step-action">📝 ${escapeHtml(f.path)}${repo} <span style="color:#4ade80">+${f.lines_added||0}</span>/<span style="color:#f87171">-${f.lines_removed||0}</span>${who}</div>`;
+            if (f.diff) {
+              const lines = (f.diff || '').split('\\n').slice(0, 30);
+              html += `<pre style="background:#0d0d0d;border:1px solid #222;border-radius:4px;padding:8px;overflow:auto;font-size:11px;max-height:240px">${lines.map(l => {
+                let cls = '#aaa';
+                if (l.startsWith('+') && !l.startsWith('+++')) cls = '#4ade80';
+                else if (l.startsWith('-') && !l.startsWith('---')) cls = '#f87171';
+                else if (l.startsWith('@@')) cls = '#7dd3fc';
+                return '<span style="color:' + cls + '">' + escapeHtml(l) + '</span>';
+              }).join('\\n')}</pre>`;
+            }
+            html += `</div>`;
+          } else {
+            const verb = {file_open:'📂 opened', file_save:'💾 saved', file_delete:'🗑️ deleted', file_rename:'🔀 renamed'}[f.type] || f.type;
+            const what = f.type === 'file_rename'
+              ? `${escapeHtml(f.src_path)} → ${escapeHtml(f.path)}`
+              : escapeHtml(f.path);
+            const cmd = f.via_command ? ` <span style="color:#666">(${escapeHtml((f.via_command||'').slice(0,60))})</span>` : '';
+            html += `<div class="step-card"><div class="step-meta"><span style="color:#888">${t}</span> ${verb} ${what}${who}${cmd}</div></div>`;
+          }
+        });
       }
       openModal(html);
     });

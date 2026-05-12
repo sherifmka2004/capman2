@@ -255,9 +255,35 @@ def build_event_narrative(session) -> str:
             truncated = stdout[:200] + ("..." if len(stdout) > 200 else "")
             lines.append(f"{prefix} OUTPUT  | {app:<12} | exit {exit_code}  {truncated}")
 
+        elif etype == EventType.FILE_OPEN:
+            path = p.get("path", "")
+            lines.append(f"{prefix} OPEN    | {app:<12} | {path}")
+
         elif etype == EventType.FILE_SAVE:
             path = p.get("path", "")
             lines.append(f"{prefix} SAVE    | {app:<12} | {path}")
+
+        elif etype == EventType.FILE_DELETE:
+            path = p.get("path", "")
+            lines.append(f"{prefix} DELETE  | {app:<12} | {path}")
+
+        elif etype == EventType.FILE_RENAME:
+            src = p.get("src_path", "")
+            dest = p.get("dest_path", "")
+            lines.append(f"{prefix} RENAME  | {app:<12} | {src} → {dest}")
+
+        elif etype == EventType.CODE_DIFF:
+            path = p.get("path", "")
+            added = p.get("lines_added", 0)
+            removed = p.get("lines_removed", 0)
+            repo = p.get("repo", "")
+            repo_str = f" [{repo}]" if repo else ""
+            lines.append(f"{prefix} DIFF    | {app:<12} | {path}{repo_str}  (+{added}/-{removed})")
+            diff_text = (p.get("diff", "") or "").strip()
+            if diff_text:
+                excerpt = diff_text[:600]
+                for dl in excerpt.splitlines()[:14]:
+                    lines.append(f"          {'':12}   {dl[:100]}")
 
         elif etype == EventType.KEYSTROKE:
             text = p.get("text", "").strip()

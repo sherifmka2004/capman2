@@ -1,0 +1,38 @@
+# capman2 privileged deep file monitor — systemd unit (system service; runs as root).
+#
+# Install:
+#   sudo cp tools/capman-fsmon/capman-fsmon.service /etc/systemd/system/
+#   # edit ExecStart / User below to match your checkout & login user, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now capman-fsmon
+#   journalctl -u capman-fsmon -f        # watch it
+#
+# It POSTs events to the capman daemon's /events endpoint (default
+# http://127.0.0.1:7331), which the daemon (running as your user) ingests.
+#
+# Backend defaults to the [sensors.filesystem] deep_monitor value in your
+# capman config, falling back to fanotify. Override with --backend.
+
+[Unit]
+Description=capman2 deep file monitor (fanotify/audit/ebpf)
+After=network.target
+
+[Service]
+Type=simple
+# --- EDIT THESE ---
+# Path to your capman2 checkout:
+WorkingDirectory=/root/workspaces/capman2
+# Use the repo's venv python so `capman.config` is importable, or system python3:
+ExecStart=/usr/bin/env python3 /root/workspaces/capman2/tools/capman-fsmon/fsmon.py --backend auto
+# Where the capman daemon stores its data (never recorded). Match [core].data_dir:
+Environment=HOME=/root
+# ------------------
+Restart=on-failure
+RestartSec=5
+# fanotify needs CAP_SYS_ADMIN; running as root is simplest. If you prefer not
+# to run as full root, try: User=root with AmbientCapabilities=CAP_SYS_ADMIN
+# (still effectively privileged).
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

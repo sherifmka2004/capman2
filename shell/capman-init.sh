@@ -12,6 +12,7 @@
 #   - working directory at time of execution
 #   - exit code
 #   - duration in milliseconds
+#   - shell PID (used to attribute file changes to direct user action)
 #   - hostname, user, tty, shell
 #   - timestamp
 #
@@ -30,7 +31,7 @@ CAPMAN_API="${CAPMAN_API:-http://localhost:7331}"
 # Universal sender (uses python3 for safe JSON encoding)
 # ----------------------------------------------------------------------
 _capman_send() {
-  local cmd="$1" exit_code="$2" duration_ms="$3" cwd="$4"
+  local cmd="$1" exit_code="$2" duration_ms="$3" cwd="$4" shpid="${5:-$$}"
   command -v python3 >/dev/null 2>&1 || return 0
   (
     CAPMAN_API="$CAPMAN_API" \
@@ -38,16 +39,24 @@ _capman_send() {
     CWD="$cwd" \
     EXIT="$exit_code" \
     DUR="$duration_ms" \
+    PID="$shpid" \
     SHELL_NAME="$1__shell" \
     python3 - <<'PYEOF' >/dev/null 2>&1 &
 import json, os, socket, urllib.request
 
 shell = "zsh" if os.environ.get("ZSH_VERSION") else ("bash" if os.environ.get("BASH_VERSION") else os.path.basename(os.environ.get("SHELL", "shell")))
 
+try:
+    pid = int(os.environ.get("PID", "") or 0)
+except ValueError:
+    pid = 0
+
 payload = {
     "command":     os.environ["CMD"],
     "cwd":         os.environ["CWD"],
     "shell":       shell,
+    "pid":         pid,
+    "command_id":  "",
     "exit_code":   int(os.environ["EXIT"]),
     "duration_ms": int(os.environ["DUR"]),
     "hostname":    socket.gethostname(),
@@ -104,7 +113,7 @@ if [ -n "$BASH_VERSION" ]; then
     if [ -n "$CAPMAN_START_MS" ] && [ "$CAPMAN_START_MS" != "0" ]; then
       dur=$(( $(date +%s%3N 2>/dev/null || echo 0) - CAPMAN_START_MS ))
     fi
-    _capman_send "$cmd" "$exit_code" "$dur" "${CAPMAN_CWD_PRE:-$PWD}"
+    _capman_send "$cmd" "$exit_code" "$dur" "${CAPMAN_CWD_PRE:-$PWD}" "$$"
     unset CAPMAN_START_MS CAPMAN_CMD_PRE CAPMAN_CWD_PRE
   }
 
@@ -128,7 +137,7 @@ elif [ -n "$ZSH_VERSION" ]; then
     local exit_code=$?
     if [ -n "$CAPMAN_CMD_ZSH" ]; then
       local dur=$(( (EPOCHSECONDS - CAPMAN_START_ZSH) * 1000 ))
-      _capman_send "$CAPMAN_CMD_ZSH" "$exit_code" "$dur" "$CAPMAN_CWD_ZSH"
+      _capman_send "$CAPMAN_CMD_ZSH" "$exit_code" "$dur" "$CAPMAN_CWD_ZSH" "$$"
       CAPMAN_CMD_ZSH=""
     fi
   }

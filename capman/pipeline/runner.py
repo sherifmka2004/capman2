@@ -63,6 +63,22 @@ class PipelineRunner:
     async def _process_event(self, event: Event) -> None:
         from capman.events import EventType
 
+        # Publish interactive shell commands so the filesystem sensor can attribute
+        # file ops that those commands caused to direct user action.
+        if event.type == EventType.SHELL_COMMAND:
+            try:
+                from capman.sensors.activity_context import record_shell_command
+                pid = event.payload.get("pid")
+                record_shell_command(
+                    command=event.payload.get("command", ""),
+                    cwd=event.payload.get("cwd", ""),
+                    pid=int(pid) if isinstance(pid, (int, str)) and str(pid).isdigit() else None,
+                    command_id=event.payload.get("command_id", "") or event.id,
+                    ts=event.ts,
+                )
+            except Exception:
+                pass
+
         # Page text → embed full content into ChromaDB, store slim ref in SQLite
         if event.type == EventType.PAGE_TEXT:
             full = event.payload.get("excerpt", "") or ""

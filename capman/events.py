@@ -26,6 +26,8 @@ class EventType(str, Enum):
     SCREENSHOT       = "screenshot"
     FILE_OPEN        = "file_open"
     FILE_SAVE        = "file_save"
+    FILE_DELETE      = "file_delete"
+    FILE_RENAME      = "file_rename"     # also covers moves (src_path → dest_path)
     SHELL_COMMAND    = "shell_command"
     SHELL_OUTPUT     = "shell_output"
     SESSION_START    = "session_start"
@@ -64,9 +66,17 @@ class Event:
       SEARCH_QUERY:    {"engine": str, "query": str, "url": str, "result_count": int}
       PAGE_TEXT:       {"url": str, "title": str, "excerpt": str, "headings": list[str]}
       SCREENSHOT:      {"path": str, "trigger": "periodic|event", "ocr_text": str}
-      SHELL_COMMAND:   {"command": str, "cwd": str, "shell": str, "command_id": str}
+      SHELL_COMMAND:   {"command": str, "cwd": str, "shell": str, "command_id": str, "pid": int}
       SHELL_OUTPUT:    {"stdout": str, "stderr": str, "exit_code": int, "command_id": str}
-      FILE_OPEN/SAVE:  {"path": str, "extension": str, "size_bytes": int}
+      FILE_OPEN/SAVE:  {"path": str, "extension": str, "size_bytes": int, "mtime": float,
+                        "attribution": "user|likely_user", "actor": {"app"?: str, "comm"?: str,
+                        "exe"?: str, "pid"?: int, "tty"?: str}, "via_command"?: str, "command_id"?: str}
+      FILE_DELETE:     {"path": str, "extension": str, "attribution": str, "actor": dict,
+                        "via_command"?: str, "command_id"?: str}
+      FILE_RENAME:     {"src_path": str, "dest_path": str, "extension": str, "attribution": str,
+                        "actor": dict, "via_command"?: str, "command_id"?: str}
+      CODE_DIFF:       {"path": str, "extension": str, "diff": str, "lines_added": int,
+                        "lines_removed": int, "repo"?: str, "branch"?: str, "attribution": str, "actor": dict}
     """
     type: EventType = EventType.WINDOW_FOCUS
     app: str = ""

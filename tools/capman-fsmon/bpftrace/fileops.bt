@@ -1,0 +1,52 @@
+#!/usr/bin/env bpftrace
+/*
+ * capman-fsmon eBPF backend — opensnoop-style file-open + write tracing.
+ *
+ * Emits one tab-separated line per event on stdout, consumed by fsmon.py:
+ *     OPEN\t<pid>\t<comm>\t<path>
+ *     WRITE\t<pid>\t<comm>\t<path>
+ *
+ * Notes / limitations (this is the least precise backend — prefer fanotify):
+ *  - openat() gives the path *as passed by the program*; relative paths are not
+ *    resolved to absolute here, so fsmon.py's path filter may miss some events.
+ *    (fsmon.py realpath()s what it can.)
+ *  - write() only carries an fd; we resolve it best-effort via the fd→name map
+ *    populated at open time. Writes to fds opened before this script started are
+ *    not resolved and are skipped.
+ *  - Requires root and a reasonably recent kernel with bpftrace.
+ *
+ * Run standalone for debugging:  sudo bpftrace tools/capman-fsmon/bpftrace/fileops.bt
+ */
+
+tracepoint:syscalls:sys_enter_openat
+{
+    @path[tid] = str(args->filename);
+}
+
+tracepoint:syscalls:sys_exit_openat
+/@path[tid] != ""/
+{
+    $fd = args->ret;
+    if ($fd >= 0) {
+        printf("OPEN\t%d\t%s\t%s\n", pid, comm, @path[tid]);
+        @fdname[pid, $fd] = @path[tid];
+    }
+    delete(@path[tid]);
+}
+
+tracepoint:syscalls:sys_enter_write
+/@fdname[pid, args->fd] != ""/
+{
+    printf("WRITE\t%d\t%s\t%s\n", pid, comm, @fdname[pid, args->fd]);
+}
+
+tracepoint:syscalls:sys_enter_close
+{
+    delete(@fdname[pid, args->fd]);
+}
+
+END
+{
+    clear(@path);
+    clear(@fdname);
+}

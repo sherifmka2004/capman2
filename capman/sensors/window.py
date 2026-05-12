@@ -7,6 +7,7 @@ import time
 from typing import ClassVar
 
 from capman.events import Event, EventType
+from capman.sensors.activity_context import set_foreground
 from capman.sensors.base import BaseSensor
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,8 @@ class WindowSensor(BaseSensor):
                     current_app = app
                     current_title = title
                     focus_start = now
+                    # Publish for file-event attribution (FilesystemSensor reads this)
+                    set_foreground(app, title)
                     if app:
                         await self.emit(Event(
                             type=EventType.WINDOW_FOCUS,

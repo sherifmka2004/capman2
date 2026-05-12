@@ -134,6 +134,37 @@ def test_narrative_file_save():
     assert "layout.tsx" in narrative
 
 
+def test_narrative_file_open_delete_rename():
+    session = _make_session(
+        (EventType.FILE_OPEN, "kitty", {"path": "/app/src/new.py", "extension": ".py"}),
+        (EventType.FILE_DELETE, "kitty", {"path": "/app/old.py", "extension": ".py"}),
+        (EventType.FILE_RENAME, "Finder", {"src_path": "/app/a.py", "dest_path": "/app/b.py"}),
+    )
+    narrative = build_event_narrative(session)
+    assert "OPEN" in narrative and "new.py" in narrative
+    assert "DELETE" in narrative and "old.py" in narrative
+    assert "RENAME" in narrative and "a.py" in narrative and "b.py" in narrative
+
+
+def test_narrative_code_diff_with_excerpt():
+    diff_text = (
+        "--- a/app.py\n+++ b/app.py\n@@ -1,2 +1,3 @@\n"
+        " import os\n-x = 1\n+x = 2\n+y = 3\n"
+    )
+    session = _make_session(
+        (EventType.CODE_DIFF, "vim", {
+            "path": "/app/app.py", "extension": ".py", "diff": diff_text,
+            "lines_added": 2, "lines_removed": 1, "repo": "myproj", "branch": "main",
+        }),
+    )
+    narrative = build_event_narrative(session)
+    assert "DIFF" in narrative
+    assert "app.py" in narrative
+    assert "[myproj]" in narrative
+    assert "+2" in narrative and "-1" in narrative
+    assert "x = 2" in narrative  # excerpt rendered
+
+
 def test_narrative_slide_change():
     session = _make_session(
         (EventType.DOC_SLIDE_CHANGE, "PowerPoint", {
