@@ -101,6 +101,57 @@ Only include decision_points where there is clear evidence of alternatives consi
 Return only valid JSON. No markdown fences."""
 
 
+PASS4_TROUBLESHOOTING_PLAYBOOK = """You are extracting a REPLAYABLE troubleshooting playbook from a debugging session.
+Future-them (or an AI assistant) needs to be able to follow this playbook step-by-step
+on a similar problem WITHOUT having to redo all the searching and pivoting.
+
+## Session Context
+Problem: {problem_statement}
+Approach: {approach_description}
+Methodology pattern: {methodology_pattern}
+Knowledge gaps revealed: {knowledge_gaps}
+Outcome: {outcome}
+
+## Full event narrative
+{event_narrative}
+
+## Your Task
+Extract the troubleshooting playbook. Be CONCRETE — every step should be runnable
+or checkable, not vague advice.
+
+## Output Format (strict JSON)
+{{
+  "title":            "Short descriptive title (e.g. 'L3VPN traffic interruption diagnosis on Huawei NCE')",
+  "domain":           "single word domain — networking|kubernetes|react|database|os|security|...",
+  "symptoms":         ["concrete observable symptom 1", "error message text", "behavior pattern"],
+  "context_signals":  ["this playbook applies when X is true", "user is on platform Y", "stack involves Z"],
+  "diagnostic_steps": [
+    {{
+      "sequence":         1,
+      "action":           "Specific check to run (command, log to read, page to load)",
+      "rationale":        "Why this check — what hypothesis it confirms or rules out",
+      "expected_signal":  "What result tells you to keep going down this path",
+      "tool":             "command or tool used (e.g. 'kubectl logs', 'tcpdump', 'browser DevTools')"
+    }}
+  ],
+  "root_cause":   "One-sentence diagnosis of the actual underlying issue",
+  "fix":          ["Concrete action step 1", "step 2", ...],
+  "verification": ["How to verify the fix worked — command/check/observation"],
+  "references":   ["URL of doc that helped", "https://..."],
+  "reusability_score": 0.85
+}}
+
+CRITICAL RULES:
+- Every diagnostic step must be RUNNABLE (a command, a check, a URL to load) — not abstract advice.
+- Symptoms must be RECOGNIZABLE so future-you knows when to apply this playbook.
+- If the user pivoted (tried something that didn't work, then changed approach), include
+  the failed path as a diagnostic step with expected_signal = "if you see X, this is NOT the issue, move on".
+- root_cause must explain the actual underlying mechanism, not just restate the symptom.
+- If the session was NOT a debugging/troubleshooting session, return {{"skip": true}}.
+
+Return only valid JSON. No markdown fences."""
+
+
 PASS3_TRIPLE_EXTRACT = """Extract knowledge graph triples from this session analysis.
 
 ## Session Analysis

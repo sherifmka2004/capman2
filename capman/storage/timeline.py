@@ -13,6 +13,7 @@ import aiosqlite
 from capman.events import (
     Event, EventType, Session, SessionAnalysis, Triple,
     ChainOfThought, CognitiveStep, DecisionPoint,
+    TroubleshootingPlaybook, KnowledgeGap,
 )
 
 
@@ -175,6 +176,92 @@ class TimelineDB:
             ),
         )
         await self._db.commit()
+
+    async def save_playbook(self, pb: TroubleshootingPlaybook) -> None:
+        await self._db.execute(
+            """INSERT OR REPLACE INTO playbooks
+               (id, session_id, title, domain, symptoms, context_signals,
+                diagnostic_steps, root_cause, fix, verification, references_json,
+                related_playbooks, reusability_score, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                pb.id,
+                pb.session_id,
+                pb.title,
+                pb.domain,
+                json.dumps(pb.symptoms),
+                json.dumps(pb.context_signals),
+                json.dumps([dataclasses.asdict(s) for s in pb.diagnostic_steps]),
+                pb.root_cause,
+                json.dumps(pb.fix),
+                json.dumps(pb.verification),
+                json.dumps(pb.references),
+                json.dumps(pb.related_playbooks),
+                pb.reusability_score,
+                pb.created_at,
+            ),
+        )
+        await self._db.commit()
+
+    async def upsert_knowledge_gap(self, gap: KnowledgeGap) -> None:
+        """Either insert a new gap or increment lookup_count + merge sessions/queries."""
+        async with self._db.execute(
+            "SELECT id, lookup_count, query_examples, sessions FROM knowledge_gaps WHERE concept = ?",
+            (gap.concept,),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row:
+            existing_queries = set(json.loads(row["query_examples"] or "[]"))
+            existing_queries.update(gap.query_examples)
+            existing_sessions = set(json.loads(row["sessions"] or "[]"))
+            existing_sessions.update(gap.sessions)
+            await self._db.execute(
+                """UPDATE knowledge_gaps
+                   SET lookup_count = lookup_count + 1,
+                       query_examples = ?,
+                       sessions = ?,
+                       last_seen = ?,
+                       domain = COALESCE(NULLIF(?, ''), domain)
+                   WHERE id = ?""",
+                (
+                    json.dumps(list(existing_queries)[:20]),
+                    json.dumps(list(existing_sessions)[:50]),
+                    gap.last_seen,
+                    gap.domain,
+                    row["id"],
+                ),
+            )
+        else:
+            await self._db.execute(
+                """INSERT INTO knowledge_gaps
+                   (id, concept, domain, lookup_count, query_examples, sessions,
+                    first_seen, last_seen, resolved)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                (
+                    gap.id, gap.concept, gap.domain, gap.lookup_count,
+                    json.dumps(gap.query_examples), json.dumps(gap.sessions),
+                    gap.first_seen, gap.last_seen,
+                ),
+            )
+        await self._db.commit()
+
+    async def get_top_knowledge_gaps(self, limit: int = 20) -> list[dict]:
+        async with self._db.execute(
+            "SELECT * FROM knowledge_gaps WHERE resolved = 0 ORDER BY lookup_count DESC, last_seen DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_playbooks(self, domain: str | None = None, limit: int = 50) -> list[dict]:
+        if domain:
+            sql = "SELECT * FROM playbooks WHERE domain = ? ORDER BY created_at DESC LIMIT ?"
+            args = (domain, limit)
+        else:
+            sql = "SELECT * FROM playbooks ORDER BY created_at DESC LIMIT ?"
+            args = (limit,)
+        async with self._db.execute(sql, args) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
     async def get_events_since(self, since_ts: float, limit: int = 10000) -> list[Event]:
         async with self._db.execute(

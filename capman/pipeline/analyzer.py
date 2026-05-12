@@ -1,9 +1,10 @@
 """
-3-pass LLM analysis orchestrator.
+4-pass LLM analysis orchestrator.
 
 Pass 1: Summarize (always, cheap)
 Pass 2: Chain-of-Thought extraction (high-value sessions only)
 Pass 3: Triple extraction (after Pass 2)
+Pass 4: Troubleshooting playbook (debugging sessions only)
 
 Supports two LLM backends (auto-detected from environment):
   - Anthropic SDK  → set ANTHROPIC_API_KEY
@@ -18,11 +19,11 @@ import time
 
 from capman.events import (
     Session, SessionAnalysis, ChainOfThought, CognitiveStep,
-    DecisionPoint, Triple,
+    DecisionPoint, Triple, TroubleshootingPlaybook, DiagnosticStep,
 )
 from capman.pipeline.prompts import (
     PASS1_SUMMARIZE, PASS2_CHAIN_OF_THOUGHT, PASS3_TRIPLE_EXTRACT,
-    build_event_narrative,
+    PASS4_TROUBLESHOOTING_PLAYBOOK, build_event_narrative,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,21 @@ class SessionAnalyzer:
             except Exception as e:
                 logger.error("Pass 3 failed for session %s: %s", session.id, e)
 
+        # --- Pass 4: Troubleshooting playbook (debugging sessions only) ---
+        if (
+            analysis.chain_of_thought
+            and analysis.chain_of_thought.problem_type.lower() in {"debugging", "troubleshooting", "review"}
+        ):
+            try:
+                narrative = build_event_narrative(session)
+                pb_data = await self._pass4(analysis, narrative)
+                if pb_data and not pb_data.get("skip"):
+                    analysis.playbook = self._parse_playbook(session.id, pb_data)
+                    logger.info("Pass 4 done: playbook '%s' (%d diagnostic steps)",
+                                analysis.playbook.title[:60], len(analysis.playbook.diagnostic_steps))
+            except Exception as e:
+                logger.error("Pass 4 failed for session %s: %s", session.id, e)
+
         analysis.analyzed_at = time.time()
         return analysis
 
@@ -156,6 +172,47 @@ class SessionAnalyzer:
         if isinstance(result, list):
             return result
         return []
+
+    async def _pass4(self, analysis: SessionAnalysis, narrative: str) -> dict:
+        """Extract a structured troubleshooting playbook (debugging sessions only)."""
+        cot = analysis.chain_of_thought
+        prompt = PASS4_TROUBLESHOOTING_PLAYBOOK.format(
+            problem_statement=analysis.problem_statement,
+            approach_description=analysis.approach_description,
+            methodology_pattern=cot.methodology_pattern if cot else "",
+            knowledge_gaps=json.dumps(cot.knowledge_gaps_revealed if cot else []),
+            outcome=cot.outcome if cot else "",
+            event_narrative=narrative[:8000],
+        )
+        # Use the strongest model for playbook extraction
+        result = await self._call_llm(self._pass2_model, prompt)
+        return result if isinstance(result, dict) else {}
+
+    def _parse_playbook(self, session_id: str, data: dict) -> TroubleshootingPlaybook:
+        steps = [
+            DiagnosticStep(
+                sequence=s.get("sequence", i + 1),
+                action=s.get("action", ""),
+                rationale=s.get("rationale", ""),
+                expected_signal=s.get("expected_signal", ""),
+                tool=s.get("tool", ""),
+            )
+            for i, s in enumerate(data.get("diagnostic_steps", []))
+        ]
+        return TroubleshootingPlaybook(
+            session_id=session_id,
+            title=data.get("title", "Untitled playbook"),
+            domain=data.get("domain", ""),
+            symptoms=data.get("symptoms", []),
+            context_signals=data.get("context_signals", []),
+            diagnostic_steps=steps,
+            root_cause=data.get("root_cause", ""),
+            fix=data.get("fix", []),
+            verification=data.get("verification", []),
+            references=data.get("references", []),
+            related_playbooks=data.get("related_playbooks", []),
+            reusability_score=data.get("reusability_score", 0.0),
+        )
 
     async def _call_llm(self, model: str, prompt: str) -> dict | list:
         import asyncio

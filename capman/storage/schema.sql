@@ -66,6 +66,43 @@ CREATE TABLE IF NOT EXISTS screenshots (
 );
 CREATE INDEX IF NOT EXISTS idx_screenshots_ts ON screenshots(ts);
 
+-- Troubleshooting playbooks (Pass 4 — debugging sessions only)
+-- The CORE differentiator: replicable problem-solving methodology
+CREATE TABLE IF NOT EXISTS playbooks (
+    id                 TEXT PRIMARY KEY,
+    session_id         TEXT REFERENCES sessions(id),
+    title              TEXT NOT NULL,
+    domain             TEXT DEFAULT '',
+    symptoms           TEXT DEFAULT '[]',     -- JSON array of trigger phrases
+    context_signals    TEXT DEFAULT '[]',     -- JSON array of "this applies when..." cues
+    diagnostic_steps   TEXT DEFAULT '[]',     -- JSON array of {action, rationale, expected_signal, tool}
+    root_cause         TEXT DEFAULT '',
+    fix                TEXT DEFAULT '[]',     -- JSON array of action steps
+    verification       TEXT DEFAULT '[]',     -- JSON array of validation steps
+    references_json    TEXT DEFAULT '[]',     -- JSON array of URLs/docs
+    related_playbooks  TEXT DEFAULT '[]',
+    reusability_score  REAL DEFAULT 0.0,
+    created_at         REAL
+);
+CREATE INDEX IF NOT EXISTS idx_playbooks_domain  ON playbooks(domain);
+CREATE INDEX IF NOT EXISTS idx_playbooks_created ON playbooks(created_at);
+
+-- Knowledge gaps — concepts the user repeatedly looks up
+-- Used to build a personal "expertise vs. unmastered" profile
+CREATE TABLE IF NOT EXISTS knowledge_gaps (
+    id              TEXT PRIMARY KEY,
+    concept         TEXT NOT NULL UNIQUE,
+    domain          TEXT DEFAULT '',
+    lookup_count    INTEGER DEFAULT 1,
+    query_examples  TEXT DEFAULT '[]',
+    sessions        TEXT DEFAULT '[]',
+    first_seen      REAL,
+    last_seen       REAL,
+    resolved        INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_gaps_count   ON knowledge_gaps(lookup_count DESC);
+CREATE INDEX IF NOT EXISTS idx_gaps_concept ON knowledge_gaps(concept);
+
 -- Schema version tracking for migrations
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL

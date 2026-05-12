@@ -183,6 +183,13 @@ class PipelineRunner:
                     await self._db.save_triple(triple)
                 await self._update_knowledge_graph(analysis)
 
+            # Save troubleshooting playbook (Pass 4 output)
+            if analysis.playbook:
+                await self._save_playbook(analysis)
+
+            # Update knowledge gaps tracker
+            await self._update_knowledge_gaps(session, analysis)
+
             logger.info("Analysis complete for session %s: %s",
                         session.id[:8], analysis.problem_statement[:60])
         except Exception as e:
@@ -202,6 +209,37 @@ class PipelineRunner:
             graph.save()
         except Exception as e:
             logger.error("Knowledge graph update failed: %s", e)
+
+    async def _save_playbook(self, analysis) -> None:
+        """Persist a troubleshooting playbook to DB, markdown, and vector store."""
+        try:
+            knowledge_dir = self._config.get("storage", {}).get("knowledge_dir", "~/.capman/knowledge")
+            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
+
+            await self._db.save_playbook(analysis.playbook)
+
+            from capman.knowledge.playbooks import save_playbook_markdown, index_playbook_in_vector_store
+            from pathlib import Path
+            path = save_playbook_markdown(analysis.playbook, Path(knowledge_dir).expanduser())
+            logger.info("Playbook saved: %s", path)
+
+            # Index for /context/suggest semantic retrieval (off the loop)
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: index_playbook_in_vector_store(analysis.playbook, str(Path(chroma_path).expanduser())),
+            )
+        except Exception as e:
+            logger.error("Playbook save failed: %s", e)
+
+    async def _update_knowledge_gaps(self, session, analysis) -> None:
+        try:
+            from capman.knowledge.gaps import (
+                update_gaps_from_analysis, update_gaps_from_search_queries,
+            )
+            await update_gaps_from_analysis(self._db, analysis)
+            await update_gaps_from_search_queries(self._db, session.id, session.search_queries)
+        except Exception as e:
+            logger.debug("Knowledge gap update failed: %s", e)
 
     async def _timeout_checker(self) -> None:
         """Periodically flush sessions that timed out without new events."""

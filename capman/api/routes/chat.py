@@ -209,6 +209,51 @@ async def _build_context(question: str, request: Request) -> str:
     except Exception as e:
         logger.debug("Page semantic search skipped: %s", e)
 
+    # 6c. Most relevant troubleshooting playbooks (THE differentiator)
+    try:
+        from capman.storage.vector import VectorStore
+        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
+        vs = VectorStore(chroma_path)
+        pb_hits = vs.search(question, top_k=3, types=["playbook"])
+        if pb_hits and db:
+            lines = []
+            for h in pb_hits:
+                pb_id = h["metadata"].get("playbook_id", "")
+                if not pb_id:
+                    continue
+                async with db._db.execute(
+                    "SELECT * FROM playbooks WHERE id = ?", (pb_id,)
+                ) as cur:
+                    row = await cur.fetchone()
+                if not row:
+                    continue
+                steps = json.loads(row["diagnostic_steps"] or "[]")
+                lines.append(f"  ━ Playbook: {row['title']} (domain: {row['domain']}, score {h['score']:.2f})")
+                if row["root_cause"]:
+                    lines.append(f"    Root cause: {row['root_cause']}")
+                for s in steps[:5]:
+                    lines.append(f"    {s.get('sequence','')}. {s.get('action','')}  [{s.get('tool','')}]")
+                lines.append("")
+            if lines:
+                sections.append("## Matching Troubleshooting Playbooks (replicable methodology)\n" + "\n".join(lines))
+    except Exception as e:
+        logger.debug("Playbook search skipped: %s", e)
+
+    # 6d. Knowledge gaps user keeps looking up
+    if db:
+        try:
+            top_gaps = await db.get_top_knowledge_gaps(limit=10)
+            if top_gaps:
+                lines = []
+                for g in top_gaps[:8]:
+                    examples = json.loads(g["query_examples"] or "[]")[:2]
+                    lines.append(f"  - {g['concept']} ({g['domain'] or 'unspecified'}, looked up {g['lookup_count']}×)")
+                    if examples:
+                        lines.append(f"      e.g. {' / '.join(examples)}")
+                sections.append("## Recurring Knowledge Gaps (concepts user keeps looking up)\n" + "\n".join(lines))
+        except Exception as e:
+            logger.debug("Gap fetch skipped: %s", e)
+
     # 7. Activity summary (last 24h)
     if db:
         try:

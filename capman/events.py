@@ -36,6 +36,10 @@ class EventType(str, Enum):
     DOC_PAGE_CHANGE  = "doc_page_change"   # Page navigation in word processors / PDFs
     DOC_SHEET_CHANGE = "doc_sheet_change"  # Sheet tab switch in spreadsheets
     DOC_NOTE_OPEN    = "doc_note_open"     # Note opened in notes apps
+    # Code & error capture
+    CODE_DIFF        = "code_diff"         # File diff after save (before/after content)
+    ERROR_DETECTED   = "error_detected"    # Stack trace or error message in output
+    AI_CONVERSATION  = "ai_conversation"   # Captured ChatGPT/Claude/etc. exchange
 
 
 def _new_id() -> str:
@@ -159,6 +163,52 @@ class Triple:
 
 
 @dataclass
+class DiagnosticStep:
+    """One troubleshooting check: what to look at, why, what's expected."""
+    sequence: int = 0
+    action: str = ""               # "Check if X is running", "Inspect log Y"
+    rationale: str = ""            # Why this check helps
+    expected_signal: str = ""      # What result tells you you're on the right track
+    tool: str = ""                 # Command/tool used (e.g. "kubectl logs", "tcpdump")
+
+
+@dataclass
+class TroubleshootingPlaybook:
+    """
+    Replayable problem-solving playbook extracted from a debugging session.
+    The CORE differentiator: turns a one-off fix into a reusable methodology.
+    """
+    id: str = field(default_factory=_new_id)
+    session_id: str = ""
+    title: str = ""                                # "L3VPN traffic interruption diagnosis"
+    domain: str = ""                               # "networking", "react", "kubernetes"
+    symptoms: list[str] = field(default_factory=list)        # Triggers: error msgs, behaviors
+    context_signals: list[str] = field(default_factory=list)  # When this playbook applies (e.g. "Huawei NCE", "Next.js SSR")
+    diagnostic_steps: list[DiagnosticStep] = field(default_factory=list)
+    root_cause: str = ""
+    fix: list[str] = field(default_factory=list)             # Concrete action steps
+    verification: list[str] = field(default_factory=list)    # How to confirm the fix worked
+    references: list[str] = field(default_factory=list)      # URLs / docs consulted
+    related_playbooks: list[str] = field(default_factory=list)
+    reusability_score: float = 0.0
+    created_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class KnowledgeGap:
+    """A concept the user repeatedly looks up — sign of incomplete mastery."""
+    id: str = field(default_factory=_new_id)
+    concept: str = ""                              # Normalized concept name
+    domain: str = ""                               # "networking", "react", etc.
+    lookup_count: int = 1
+    query_examples: list[str] = field(default_factory=list)  # Verbatim search queries
+    sessions: list[str] = field(default_factory=list)        # Where it was looked up
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+    resolved: bool = False                          # Marked once user explicitly says they learned it
+
+
+@dataclass
 class SessionAnalysis:
     session_id: str = ""
     problem_statement: str = ""
@@ -168,6 +218,7 @@ class SessionAnalysis:
     knowledge_acquired: list[str] = field(default_factory=list)
     triples: list[Triple] = field(default_factory=list)
     chain_of_thought: ChainOfThought | None = None
+    playbook: TroubleshootingPlaybook | None = None  # Pass 4: only for debugging sessions
     confidence: float = 0.0
     model_used: str = ""
     analyzed_at: float = field(default_factory=time.time)
