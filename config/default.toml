@@ -89,7 +89,7 @@ machine_procs = [
 
 # --- deep monitor (privileged Linux helper: tools/capman-fsmon) ---
 # off | fanotify | audit | ebpf  — see docs/FILE_MONITORING.md. Needs root.
-deep_monitor = "off"
+deep_monitor = "fanotify"
 deep_monitor_paths = []   # defaults to watch_paths when empty
 
 [sensors.browser_relay]
