@@ -7,7 +7,7 @@
 | **Rewind.ai** | Commercial | Screen, audio, text | ❌ Q&A only | ❌ | ❌ Cloud | macOS/Win |
 | **Microsoft Recall** | OS-bundled | Screenshots only | ❌ | ❌ | ✅ Local | Win11+ Copilot+ PCs |
 | **Apple Intelligence** | OS-bundled | Apps only | ❌ | ❌ | ✅ Local | macOS 15+ |
-| **screenpipe** | OSS | Screen, audio, OCR | ❌ Search only | ✅ | ✅ | ✅ |
+| **screenpipe** | OSS | 24/7 screen video + audio, OCR/STT | ❌ Search + BYO pipes | ✅ | ✅ | ✅ |
 | **Khoj** | OSS | Documents, notes | ❌ RAG only | ✅ | ✅ | ✅ |
 | **Memex (Worldbrain)** | OSS extension | Browsing only | ❌ | ✅ | ✅ | Browser only |
 | **Obsidian + plugins** | Free + plugins | Manual notes | ❌ Manual | Partial | ✅ | ✅ |
@@ -43,34 +43,26 @@ When the user asks ChatGPT or Claude a question, that's part of their cognitive 
 ### Gap 7: No Tool-Specific Context (LOW)
 A URL like `https://github.com/foo/bar/issues/123` is just a URL to us. It should be enriched with "GitHub issue #123 in foo/bar" and tied to other GitHub activity.
 
-## Implementation Plan (this PR)
+## Status — Tier 1 shipped
 
-Implementing Tier 1 — the features that lock in differentiation:
+The differentiating features above are now implemented:
 
-1. **`capman/knowledge/gaps.py`** — Knowledge Gap Tracker
-   - SQLite table `knowledge_gaps` (concept, lookup_count, sessions[], first/last seen)
-   - Updated on every Pass 2 — clusters knowledge_gaps_revealed across sessions
-   - Endpoint: `GET /knowledge/gaps?top=20` returns user's top recurring lookups
+1. ✅ **Knowledge Gap Tracker** — `capman/knowledge/gaps.py`, `knowledge_gaps` table, `GET /knowledge/gaps`, surfaced in the chat context and the Knowledge Gaps tab.
+2. ✅ **4th LLM pass — Troubleshooting Playbook** — `PASS4_TROUBLESHOOTING_PLAYBOOK` in `prompts.py`, runs for debugging/troubleshooting/review sessions; `playbooks` table + Obsidian markdown + ChromaDB index; `GET /knowledge/playbooks`, Playbooks tab.
+3. ⏳ **Error / stack-trace detector** — still roadmap (raw `shell_output` is captured; tagging not yet wired).
+4. ✅ **Code-change capture** — built into the rewritten `filesystem` sensor: unified diffs (snapshot-based or `git diff`) → `CODE_DIFF` events, rendered in the LLM narrative and the Sessions tab. See [FILE_MONITORING.md](FILE_MONITORING.md).
+5. ✅ **Active context retrieval** — `POST /context/suggest` (`capman/api/routes/context.py`) → playbooks + similar sessions + related concepts + page excerpts + knowledge gaps.
 
-2. **4th LLM pass — Troubleshooting Playbook** (`capman/pipeline/prompts.py`, `analyzer.py`)
-   - Runs after Pass 2 if `problem_type ∈ {debugging, troubleshooting}`
-   - Output: structured playbook (symptoms, diagnostic_steps, fix, verification)
-   - Saved as markdown at `~/.capman/playbooks/{slug}.md`
-   - Indexed in ChromaDB for semantic retrieval
+Plus, beyond the original Tier-1 list: real-time **shell hook**, **document-navigation** sensor, **in-page interaction** capture, **direct-user-action file attribution**, the privileged **`capman-fsmon`** deep file monitor (Linux fanotify/auditd/eBPF + macOS Endpoint Security), and a **storage calculator** (`/storage`, `capman storage`, Storage tab).
 
-3. **`capman/pipeline/error_detect.py`** — Stack trace / error detector
-   - Runs in enricher on every `shell_output` event
-   - Pattern matches Python tracebacks, JS stack traces, Go panics, HTTP errors
-   - Tags events with `error_type` + `error_signature`
+This turns capman2 from a passive knowledge store into an **actionable methodology engine** — not just remembering what you did, but telling future-you (or future-AI) *how* to do it again.
 
-4. **`capman/sensors/code_diff.py`** — Code change capture
-   - Hooks into existing `filesystem` sensor's save events
-   - Computes unified diff before/after for code files
-   - Emits `CODE_DIFF` event
+---
 
-5. **`capman/api/routes/context.py`** — Active context retrieval
-   - `POST /context/suggest` — input: free-text task description
-   - Returns: relevant playbooks + knowledge nodes + similar past sessions
-   - Designed to be injected into IDE/coding-agent system prompts
+## Deep dive: capman2 vs. screenpipe
 
-This turns capman2 from a passive knowledge store into an **actionable methodology engine** — the only thing on the market that can not just remember what you did but tell future-you (or future-AI) *how* to do it again.
+The closest open-source comparison. screenpipe is a 24/7 screen-video + audio
+recorder (OCR/STT → searchable archive + "pipes" plugin platform); capman2 is a
+structured-event capturer + LLM cognitive-workflow extractor. They overlap almost
+not at all and are arguably complementary. Full breakdown:
+**[CAPMAN_VS_SCREENPIPE.md](CAPMAN_VS_SCREENPIPE.md)**.
