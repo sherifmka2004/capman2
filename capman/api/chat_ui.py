@@ -737,12 +737,12 @@ function renderMarkdown(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+    .replace(/```([\\s\\S]*?)```/g, '<pre><code>$1</code></pre>')
+    .replace(/`([^`\\n]+)`/g, '<code>$1</code>')
+    .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
+    .replace(/\\*([^*\\n]+)\\*/g, '<em>$1</em>')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/\n/g, '<br>');
+    .replace(/\\n/g, '<br>');
 }
 
 function doSend() {
