@@ -96,8 +96,8 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Capture Sensors                           │
-│  window · keyboard · mouse · clipboard · screenshot · shell      │
-│  filesystem · browser_relay · documents                          │
+│  window · keyboard · mouse · idle · clipboard · screenshot       │
+│  shell · filesystem · browser_relay · documents                  │
 └────────────────────────┬─────────────────────────────────────────┘
                          │ Event objects (typed, timestamped)
                          ▼
@@ -106,10 +106,12 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
               └──────────┬──────────┘
                          │
                          ▼
-              ┌─────────────────────┐
-              │   SessionDetector   │  sliding-window state machine
-              │  IDLE→ACTIVE→COOL   │  groups events into episodes
-              └──────────┬──────────┘
+              ┌──────────────────────────┐
+              │     SessionDetector      │  sliding-window state machine
+              │   IDLE → ACTIVE → COOL   │  groups events into episodes
+              │   idle_start → hard      │  AFK force-closes the current
+              │   session break          │  session (no glued lunch breaks)
+              └─────────────┬────────────┘
                          │ completed Session
                          ▼
               ┌─────────────────────┐
