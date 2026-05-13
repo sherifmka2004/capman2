@@ -95,6 +95,25 @@ class PipelineRunner:
                 "full_chars_indexed": len(full),
             }
 
+        # Document content the user actually read → embed full text, slim SQLite
+        if event.type == EventType.DOC_CONTENT:
+            full = event.payload.get("text", "") or ""
+            asyncio.create_task(self._embed_doc_text(
+                doc_path=event.payload.get("doc_path", ""),
+                doc_name=event.payload.get("doc_name", ""),
+                item_kind=event.payload.get("item_kind", ""),
+                item_index=int(event.payload.get("item_index", 0) or 0),
+                item_label=event.payload.get("item_label", ""),
+                text=full,
+                ts=event.ts,
+                app=event.payload.get("app", "") or event.app or "",
+            ))
+            event.payload = {
+                **event.payload,
+                "text": full[:300],             # browsable excerpt only
+                "full_chars_indexed": len(full),
+            }
+
         await self._db.insert_event(event)
 
         completed, _ = self._detector.ingest(event)
@@ -118,6 +137,31 @@ class PipelineRunner:
                 logger.info("Embedded page %s (%d chunks, %d chars)", url[:60], count, len(text))
         except Exception as e:
             logger.debug("Page text embedding skipped: %s", e)
+
+    async def _embed_doc_text(self, doc_path: str, doc_name: str, item_kind: str,
+                              item_index: int, item_label: str, text: str,
+                              ts: float, app: str) -> None:
+        """Embed read-document text into the vector store."""
+        if not text or not text.strip():
+            return
+        try:
+            from capman.storage.vector import VectorStore
+            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
+            vs = VectorStore(chroma_path)
+            count = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: vs.add_doc_text(
+                    doc_path=doc_path, doc_name=doc_name,
+                    item_kind=item_kind, item_index=item_index, item_label=item_label,
+                    text=text, ts=ts, app=app,
+                ),
+            )
+            if count:
+                logger.info("Embedded %s %d of %s (%d chunks, %d chars)",
+                            item_kind, item_index, doc_name or doc_path or app,
+                            count, len(text))
+        except Exception as e:
+            logger.debug("Doc text embedding skipped: %s", e)
 
     async def _close_session(self, session: Session) -> None:
         """Persist session and schedule analysis."""

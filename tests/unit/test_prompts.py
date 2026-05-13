@@ -280,3 +280,80 @@ def test_narrative_ocr_screenshot():
     narrative = build_event_narrative(session)
     assert "SCREEN" in narrative
     assert "Cannot read property" in narrative
+
+
+# ---------------------------------------------------------------------------
+# Mouse + idle narrative cases
+# ---------------------------------------------------------------------------
+
+def test_narrative_click_with_element_renders():
+    session = _make_session(
+        (EventType.MOUSE_CLICK, "PyCharm", {
+            "button": "left", "x": 10, "y": 20,
+            "element": {"role": "AXButton", "label": "Run all", "value": "", "app": "PyCharm"},
+        }),
+    )
+    narrative = build_event_narrative(session)
+    assert "CLICK" in narrative
+    assert "Run all" in narrative
+    assert "AXButton" in narrative
+
+
+def test_narrative_click_without_element_is_silent():
+    session = _make_session(
+        (EventType.MOUSE_CLICK, "Chrome", {"button": "left", "x": 10, "y": 20}),
+    )
+    narrative = build_event_narrative(session)
+    assert "CLICK" not in narrative
+
+
+def test_narrative_long_scroll_burst_renders():
+    session = _make_session(
+        (EventType.MOUSE_SCROLL, "Chrome", {
+            "direction": "down", "ticks": 25, "duration_s": 6.4,
+            "delta_total": 25, "dx": 0, "dy": -25,
+            "start_x": 0, "start_y": 0, "end_x": 0, "end_y": 0,
+        }),
+    )
+    narrative = build_event_narrative(session)
+    assert "SCROLL" in narrative
+    assert "down" in narrative
+
+
+def test_narrative_short_scroll_is_silent():
+    session = _make_session(
+        (EventType.MOUSE_SCROLL, "Chrome", {
+            "direction": "down", "ticks": 4, "duration_s": 0.3,
+            "delta_total": 4, "dx": 0, "dy": -4,
+            "start_x": 0, "start_y": 0, "end_x": 0, "end_y": 0,
+        }),
+    )
+    narrative = build_event_narrative(session)
+    assert "SCROLL" not in narrative
+
+
+def test_narrative_idle_start_and_end():
+    session = _make_session(
+        (EventType.IDLE_START, "", {"last_input_ts": 1000.0}),
+        (EventType.IDLE_END, "", {"idle_started_at": 1000.0, "idle_duration_s": 240.0}),
+    )
+    narrative = build_event_narrative(session)
+    assert "AFK" in narrative
+    assert "went idle" in narrative
+    assert "returned" in narrative
+    assert "240" in narrative
+
+
+def test_narrative_heatmap_tick_is_never_rendered():
+    session = _make_session(
+        (EventType.MOUSE_HEATMAP_TICK, "Chrome", {
+            "app": "Chrome", "minute_bucket": 1000,
+            "grid": {"0,0": 5}, "grid_size": 100, "screen_size": [100, 100],
+        }),
+    )
+    narrative = build_event_narrative(session)
+    # Heatmap is a data-only event — should produce no narrative line at all.
+    # The session contains only one event so an empty result yields the
+    # "no significant events" placeholder.
+    assert "HEATMAP" not in narrative
+    assert "MOUSE" not in narrative

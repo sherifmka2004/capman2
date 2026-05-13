@@ -34,6 +34,40 @@ class LinuxAdapter(PlatformAdapter):
             logger.debug("get_active_window failed: %s", e)
             return "", ""
 
+    def get_element_at(self, x: int, y: int) -> dict | None:
+        """Resolve the AT-SPI accessible at (x, y). Best-effort; returns None
+        when ``pyatspi`` isn't installed or the desktop a11y bus isn't running
+        (the typical case on a headless box or Wayland-only session)."""
+        try:
+            import pyatspi  # type: ignore
+        except Exception:
+            return None
+        try:
+            desktop = pyatspi.Registry.getDesktop(0)
+            for app in desktop:
+                if app is None:
+                    continue
+                # Walk the topmost windows and dive into the deepest descendant
+                # at (x, y).  pyatspi.Component.getAccessibleAtPoint is the
+                # standard call but isn't exposed uniformly across versions —
+                # fall back to a manual hit-test.
+                try:
+                    elem = app.queryComponent().getAccessibleAtPoint(int(x), int(y), 0)
+                except Exception:
+                    elem = None
+                if elem:
+                    role = elem.getRoleName() if hasattr(elem, "getRoleName") else ""
+                    label = elem.name or ""
+                    return {
+                        "role": str(role),
+                        "label": str(label)[:200],
+                        "value": "",
+                        "app": app.name or "",
+                    }
+        except Exception as e:
+            logger.debug("get_element_at (AT-SPI) failed: %s", e)
+        return None
+
     def _pid_to_app(self, pid: str) -> str:
         try:
             comm = subprocess.check_output(

@@ -3,7 +3,7 @@ data_dir = "~/.capman"
 log_level = "INFO"
 
 [sensors]
-enabled = ["window", "screenshot", "keyboard", "clipboard", "shell", "filesystem", "browser_relay", "documents"]
+enabled = ["window", "screenshot", "keyboard", "mouse", "clipboard", "shell", "filesystem", "browser_relay", "documents", "idle"]
 
 [sensors.screenshot]
 interval_seconds = 30
@@ -17,7 +17,25 @@ exclude_apps = ["1Password", "Keychain", "Signal", "Bitwarden"]
 min_text_length = 3
 
 [sensors.mouse]
-track_clicks = true
+track_clicks               = true
+# When true, every click is enriched with a {role,label} read off the OS
+# accessibility tree (PyObjC AX on macOS, AT-SPI on Linux, UIAutomation on
+# Windows). A 50ms hard ceiling guards against slow AX calls.
+resolve_element_at_click   = true
+element_lookup_timeout_ms  = 50
+# Coalesced scroll bursts → one MOUSE_SCROLL per burst.
+track_scroll               = true
+scroll_debounce_ms         = 800     # close a burst after this much quiet
+scroll_min_burst_ticks     = 3       # require ≥ N ticks before emitting
+# Per-app per-minute mouse-move heatmap (no per-event move storage).
+track_move_heatmap         = true
+heatmap_grid               = 100     # 100 × 100 cells per screen
+heatmap_flush_interval_s   = 60
+
+[sensors.idle]
+enabled                    = true
+idle_threshold_s           = 180     # no key/click/scroll for N s → AFK
+poll_interval_s            = 5
 
 [sensors.clipboard]
 poll_interval_ms = 500
@@ -102,6 +120,21 @@ port = 7331
 poll_interval_s = 2.0
 # Minimum dwell seconds before a slide/page change is considered meaningful
 min_dwell_s = 3.0
+
+# --- document content capture (slide/page/sheet text the user actually reads) ---
+# When true, the document sensor wraps each navigation in an attention-gated
+# tracker. Quick scroll-throughs never reach the dwell threshold and produce no
+# event; units the user dwells on get their visible text extracted (via the
+# platform adapter's app-model hook, OCR fallback) and emitted as DOC_CONTENT.
+# Full text is embedded in ChromaDB; SQLite keeps a 300-char excerpt + size.
+capture_content              = true
+content_min_attention_s      = 4.0     # how long the user must dwell before we capture
+content_revisit_threshold    = 2       # OR: how many revisits to a unit also trigger capture
+content_max_items_per_doc    = 80      # safety cap so a 500-page PDF doesn't flood
+content_max_chars            = 8000    # truncate very long extractions
+content_use_app_model        = true    # try the per-app accessibility/automation hook first
+content_use_ocr_fallback     = true    # fall back to screenshot+OCR if app model yields nothing
+content_extractor_order      = ["app_model", "ocr"]
 
 [pipeline.session]
 idle_threshold_s = 90

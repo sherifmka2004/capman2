@@ -43,7 +43,8 @@ capman2 makes it persistent, searchable, and replayable. An LLM that has seen yo
 |--------|-----------------|-----------|
 | `window` | Active app + window title + focus duration | macOS, Linux, Windows |
 | `keyboard` | Aggregated text blocks (not individual keys) | macOS, Linux, Windows |
-| `mouse` | Click events, focus changes | macOS, Linux, Windows |
+| `mouse` | Clicks **enriched with the UI element under the cursor** (AX/AT-SPI/UIAutomation), coalesced **scroll bursts**, per-app per-minute **move heatmap** | macOS, Linux, Windows |
+| `idle` | AFK detection on real input activity (keys/clicks/scroll). Emits `idle_start`/`idle_end`; force-closes the current session on idle. See [docs/INPUT_ACTIVITY.md](docs/INPUT_ACTIVITY.md). | macOS, Linux, Windows |
 | `clipboard` | Copy/paste chains with source app | macOS, Linux, Windows |
 | `screenshot` | Periodic + event-triggered screenshots with OCR | macOS, Linux, Windows |
 | `shell` | History watcher (`.bash_history`, `.zsh_history`) — passive fallback | macOS, Linux |
@@ -51,11 +52,19 @@ capman2 makes it persistent, searchable, and replayable. An LLM that has seen yo
 | `filesystem` | File create/save/delete/rename **+ content diffs** — only files the *user* directly touched (editor / interactive shell / focused file manager), not build-tool/LSP/daemon churn. Git-aware diffs in repos. | macOS, Linux, Windows |
 | `capman-fsmon` | **Privileged deep monitor** (opt-in, needs root): true file *opens/reads* + the responsible **process** (PID/comm/exe/signing-id/TTY). Linux via fanotify (auditd/eBPF fallback); macOS via Endpoint Security `eslogger` (or `fs_usage`, needs Full Disk Access). POSTs to the daemon. See [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md). | Linux, macOS |
 | `browser_relay` | Tab lifecycle, URLs, search queries, page text (via extension) | Chrome, Firefox |
-| `documents` | Slide/page/sheet navigation with dwell times | macOS, Linux, Windows |
+| `documents` | Slide/page/sheet navigation with dwell times + **content of what you actually read** | macOS, Linux, Windows |
 
 ### Document Navigation (the layer nobody else has)
 
 When you navigate a PowerPoint, capman2 records every slide you visit, how long you stayed, whether you jumped non-linearly, and which slides you returned to. Same for Word pages, Excel sheets, PDF pages, and notes apps. This turns a document session into a structured reading graph — "spent 4 minutes on slide 7, jumped back to slide 3, skipped slides 8-10" — which the LLM uses to infer what content you found important, confusing, or already known.
+
+On top of navigation, capman2 also captures the **text of the slides / pages /
+sheets you actually read** — gated by an attention policy so quick
+scroll-throughs are silently dropped. The full text is embedded into ChromaDB
+(searchable from the chatbot, e.g. *"summarize what I read in that PDF
+yesterday"*); SQLite keeps a slim 300-char excerpt. Configurable: dwell
+threshold, per-doc cap, OCR vs. app-model extractor order — see
+[`docs/DOCUMENT_CONTENT.md`](docs/DOCUMENT_CONTENT.md).
 
 Supported apps:
 - **Presentations**: PowerPoint, Keynote, LibreOffice Impress

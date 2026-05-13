@@ -145,6 +145,64 @@ class VectorStore:
             logger.warning("Failed to index page %s: %s", url, e)
             return 0
 
+    def add_doc_text(
+        self,
+        doc_path: str,
+        doc_name: str,
+        item_kind: str,
+        item_index: int,
+        item_label: str,
+        text: str,
+        ts: float | None = None,
+        app: str = "",
+    ) -> int:
+        """
+        Embed text the user actually *read* on a single slide / page / sheet /
+        note. Mirrors `add_page_text` (chunked + overlapped) so semantic search
+        can pull paragraph-sized slices out of long pages without ballooning
+        SQLite payloads. Returns chunks indexed.
+        """
+        self._ensure_connected()
+        if not text:
+            return 0
+
+        ts = ts or time.time()
+        doc_id = doc_path or doc_name or "unknown"
+        unit_hash = _hash(f"{doc_id}|{item_kind}|{item_index}|{item_label}")
+        chunks = _chunk_text(text)
+        if not chunks:
+            return 0
+
+        ids, docs, metas = [], [], []
+        anchor = f"{doc_name or doc_id} — {item_kind} {item_index}".strip()
+        if item_label:
+            anchor += f": {item_label}"
+
+        for i, chunk in enumerate(chunks):
+            doc = anchor + "\n\n" + chunk if i == 0 else chunk
+            ids.append(f"doc:{unit_hash}:{i}")
+            docs.append(doc)
+            metas.append({
+                "type": "doc",
+                "doc_path": doc_path or "",
+                "doc_name": doc_name or "",
+                "item_kind": item_kind or "",
+                "item_index": int(item_index or 0),
+                "item_label": item_label or "",
+                "app": app or "",
+                "title": anchor,
+                "ts": float(ts),
+                "chunk": i,
+                "total_chunks": len(chunks),
+            })
+
+        try:
+            self._collection.upsert(ids=ids, documents=docs, metadatas=metas)
+            return len(chunks)
+        except Exception as e:
+            logger.warning("Failed to index doc unit %s: %s", anchor, e)
+            return 0
+
     # ------------------------------------------------------------------
     # Retrieval
     # ------------------------------------------------------------------

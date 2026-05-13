@@ -10,6 +10,11 @@ Polls every 2s. Detects changes in:
 
 Emits DOC_SLIDE_CHANGE, DOC_PAGE_CHANGE, DOC_SHEET_CHANGE, DOC_NOTE_OPEN events.
 Includes dwell time (how long the user stayed on the previous slide/page).
+
+Optionally (config: `capture_content`, default True) wraps each navigation in
+a `DocumentContentTracker`, which — once the user *dwells* long enough on a
+unit — extracts the visible text and emits `DOC_CONTENT`. Quick scroll-throughs
+never reach the dwell threshold and produce no event.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ import logging
 import time
 from typing import ClassVar
 
-from capman.events import Event, EventType, DocState
+from capman.events import DocState, Event, EventType
 from capman.sensors.base import BaseSensor
 
 logger = logging.getLogger(__name__)
@@ -41,31 +46,57 @@ class DocumentSensor(BaseSensor):
     async def run(self) -> None:
         from capman.platform.base import get_platform_adapter
         adapter = get_platform_adapter(self.config)
-        poll_s = self.config.get("sensors", {}).get("documents", {}).get("poll_interval_s", 2.0)
+        docs_cfg = self.config.get("sensors", {}).get("documents", {})
+        poll_s = docs_cfg.get("poll_interval_s", 2.0)
+        capture_content = bool(docs_cfg.get("capture_content", True))
+
+        content_tracker = None
+        if capture_content:
+            try:
+                from capman.document import build_content_tracker
+                content_tracker = build_content_tracker(self.config, self.emit, adapter)
+                if content_tracker.enabled:
+                    logger.info("DocumentSensor: content capture enabled (extractors=%s)",
+                                content_tracker._chain.names())
+                else:
+                    logger.info("DocumentSensor: content capture requested but no extractor "
+                                "is available in this environment — disabling")
+                    content_tracker = None
+            except Exception as e:  # never let capture failures take the sensor down
+                logger.warning("DocumentSensor: content tracker init failed (%s) — disabling", e)
+                content_tracker = None
 
         prev_state: DocState | None = None
         prev_state_ts: float = time.time()
 
-        while not self._stop_event.is_set():
-            try:
-                app, title = adapter.get_active_window()
-                if app:
-                    state = await asyncio.get_event_loop().run_in_executor(
-                        None, adapter.get_document_state, app, title
-                    )
-                    if state:
-                        event = self._diff_to_event(state, prev_state, prev_state_ts, app, title)
-                        if event:
-                            await self.emit(event)
-                            prev_state = state
-                            prev_state_ts = time.time()
-                    elif prev_state is not None:
-                        # Moved away from a document app — reset tracking
-                        prev_state = None
-            except Exception as e:
-                logger.debug("DocumentSensor poll error: %s", e)
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    app, title = adapter.get_active_window()
+                    if app:
+                        state = await asyncio.get_event_loop().run_in_executor(
+                            None, adapter.get_document_state, app, title
+                        )
+                        if state:
+                            event = self._diff_to_event(state, prev_state, prev_state_ts, app, title)
+                            if event:
+                                await self.emit(event)
+                                if content_tracker is not None:
+                                    content_tracker.note_navigation(state, app, title)
+                                prev_state = state
+                                prev_state_ts = time.time()
+                        elif prev_state is not None:
+                            # Moved away from a document app — reset tracking
+                            prev_state = None
+                            if content_tracker is not None:
+                                content_tracker.note_doc_closed()
+                except Exception as e:
+                    logger.debug("DocumentSensor poll error: %s", e)
 
-            await asyncio.sleep(poll_s)
+                await asyncio.sleep(poll_s)
+        finally:
+            if content_tracker is not None:
+                content_tracker.stop()
 
     def _diff_to_event(
         self,

@@ -63,6 +63,11 @@ class KeyboardSensor(BaseSensor):
     def _on_press(self, key) -> None:
         try:
             from pynput import keyboard  # type: ignore
+            # Always bump the AFK timer first — even keystrokes we redact still
+            # mean the user is at the keyboard.
+            from capman.sensors.activity_context import record_input_activity
+            record_input_activity()
+
             # Update app context
             from capman.platform.base import get_platform_adapter
             app, title = get_platform_adapter(self.config).get_active_window()

@@ -21,6 +21,8 @@ _lock = threading.Lock()
 _foreground: tuple[str, str, float] = ("", "", 0.0)  # (app, title, since_ts)
 # Most-recent interactive shell commands: dicts {ts, command, cwd, pid, command_id}
 _recent_commands: "deque[dict]" = deque(maxlen=128)
+# Last keyboard/mouse/scroll input timestamp — used by IdleSensor.
+_last_input_ts: float = 0.0
 
 
 def set_foreground(app: str, title: str = "") -> None:
@@ -54,3 +56,30 @@ def recent_commands(within_s: float) -> list[dict]:
     cutoff = time.time() - within_s
     with _lock:
         return [c for c in _recent_commands if c["ts"] >= cutoff]
+
+
+def record_input_activity(ts: float | None = None) -> None:
+    """Any direct user input (key press, click, scroll, …) calls this.
+    Cheap (one bounded float assignment) so it's safe to call on every event."""
+    global _last_input_ts
+    t = ts if ts is not None else time.time()
+    with _lock:
+        if t > _last_input_ts:
+            _last_input_ts = t
+
+
+def time_since_last_input() -> float:
+    """Seconds since the last recorded user input. Returns +inf if no input
+    has ever been seen this session (so first-ever check doesn't trigger
+    spurious IDLE_END)."""
+    with _lock:
+        ts = _last_input_ts
+    if ts <= 0.0:
+        return float("inf")
+    return max(0.0, time.time() - ts)
+
+
+def last_input_ts() -> float:
+    """Raw last-input timestamp (0.0 if never seen)."""
+    with _lock:
+        return _last_input_ts

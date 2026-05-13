@@ -238,6 +238,35 @@ async def _build_context(question: str, request: Request) -> str:
         except Exception as e:
             logger.debug("File activity fetch skipped: %s", e)
 
+    # 6a-bis. Semantically relevant document content (slides/pages/sheets the user actually read)
+    try:
+        from capman.storage.vector import VectorStore
+        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
+        vs = VectorStore(chroma_path)
+        doc_hits = vs.search(question, top_k=6, types=["doc"])
+        if doc_hits:
+            lines = []
+            for h in doc_hits:
+                meta = h.get("metadata", {}) or {}
+                ts = meta.get("ts", 0)
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
+                doc_name = meta.get("doc_name", "") or meta.get("doc_path", "") or ""
+                kind = meta.get("item_kind", "")
+                idx = meta.get("item_index", "")
+                label = meta.get("item_label", "")
+                head = f"{doc_name} — {kind} {idx}".strip()
+                if label:
+                    head += f": {label}"
+                lines.append(f"  [{when}] [{h['score']:.2f}] {head}")
+                if meta.get("app"):
+                    lines.append(f"    App: {meta['app']}")
+                lines.append(f"    Excerpt: {h['text'][:800]}")
+                lines.append("")
+            sections.append("## Relevant Document Content (slides / pages / sheets the user actually read)\n"
+                            + "\n".join(lines))
+    except Exception as e:
+        logger.debug("Doc semantic search skipped: %s", e)
+
     # 6b. Semantically relevant page chunks (vector search on embedded page text)
     try:
         from capman.storage.vector import VectorStore
@@ -303,6 +332,57 @@ async def _build_context(question: str, request: Request) -> str:
                 sections.append("## Recurring Knowledge Gaps (concepts user keeps looking up)\n" + "\n".join(lines))
         except Exception as e:
             logger.debug("Gap fetch skipped: %s", e)
+
+    # 6e. Active vs AFK periods (last 7 days, totals by day)
+    if db:
+        try:
+            since = time.time() - 7 * 86400
+            async with db._db.execute(
+                """SELECT type, payload, ts FROM events
+                   WHERE type IN ('idle_start','idle_end') AND ts > ?
+                   ORDER BY ts ASC""",
+                (since,),
+            ) as cur:
+                rows = await cur.fetchall()
+            if rows:
+                # Pair each IDLE_START with the next IDLE_END to get an idle window.
+                idle_intervals: list[tuple[float, float]] = []
+                start_ts: float | None = None
+                for r in rows:
+                    if r["type"] == "idle_start":
+                        start_ts = r["ts"]
+                    elif r["type"] == "idle_end" and start_ts is not None:
+                        idle_intervals.append((start_ts, r["ts"]))
+                        start_ts = None
+                # Bucket idle seconds per local day; active = (24h − idle − unknown).
+                idle_by_day: dict[str, float] = {}
+                for s, e in idle_intervals:
+                    day = time.strftime("%Y-%m-%d", time.localtime(s))
+                    idle_by_day[day] = idle_by_day.get(day, 0.0) + (e - s)
+                lines = []
+                for day in sorted(idle_by_day.keys(), reverse=True)[:7]:
+                    idle_h = idle_by_day[day] / 3600.0
+                    # Active hours = time we observed *any* event between first
+                    # and last event of that day, minus idle.
+                    async with db._db.execute(
+                        "SELECT MIN(ts) AS lo, MAX(ts) AS hi FROM events "
+                        "WHERE ts >= ? AND ts < ?",
+                        (
+                            time.mktime(time.strptime(day, "%Y-%m-%d")),
+                            time.mktime(time.strptime(day, "%Y-%m-%d")) + 86400,
+                        ),
+                    ) as cur2:
+                        span_row = await cur2.fetchone()
+                    span_h = ((span_row["hi"] or 0) - (span_row["lo"] or 0)) / 3600.0 if span_row else 0
+                    active_h = max(0.0, span_h - idle_h)
+                    lines.append(
+                        f"  [{day}] active ≈ {active_h:.1f} h  |  idle ≈ {idle_h:.1f} h  "
+                        f"(observed window {span_h:.1f} h)"
+                    )
+                if lines:
+                    sections.append("## Active vs AFK Periods (last 7 days)\n" + "\n".join(lines))
+        except Exception as e:
+            logger.debug("AFK summary skipped: %s", e)
 
     # 7. Activity summary (last 24h)
     if db:

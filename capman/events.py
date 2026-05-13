@@ -16,6 +16,10 @@ class EventType(str, Enum):
     CLIPBOARD_COPY   = "clipboard_copy"
     CLIPBOARD_PASTE  = "clipboard_paste"
     MOUSE_CLICK      = "mouse_click"
+    MOUSE_SCROLL     = "mouse_scroll"        # one event per coalesced scroll *burst*
+    MOUSE_HEATMAP_TICK = "mouse_heatmap_tick"  # per-app per-minute aggregated move grid
+    IDLE_START       = "idle_start"          # no key/mouse input for idle_threshold_s
+    IDLE_END         = "idle_end"            # user resumed input after IDLE_START
     WINDOW_FOCUS     = "window_focus"
     WINDOW_BLUR      = "window_blur"
     TAB_OPEN         = "tab_open"
@@ -38,6 +42,8 @@ class EventType(str, Enum):
     DOC_PAGE_CHANGE  = "doc_page_change"   # Page navigation in word processors / PDFs
     DOC_SHEET_CHANGE = "doc_sheet_change"  # Sheet tab switch in spreadsheets
     DOC_NOTE_OPEN    = "doc_note_open"     # Note opened in notes apps
+    DOC_CONTENT      = "doc_content"       # Text the user actually *read* on a slide/page/sheet/note
+                                           #   (attention-gated; full text embedded in the vector store)
     # Code & error capture
     CODE_DIFF        = "code_diff"         # File diff after save (before/after content)
     ERROR_DETECTED   = "error_detected"    # Stack trace or error message in output
@@ -60,6 +66,16 @@ class Event:
 
     Payload schema per type:
       KEYSTROKE:       {"text": str, "is_paste": bool, "field_type": "text|password|search"}
+      MOUSE_CLICK:     {"button": "left|right|middle", "x": int, "y": int,
+                        "element"?: {"role": str, "label": str, "value"?: str, "app"?: str,
+                                     "bbox"?: list[int]}}
+      MOUSE_SCROLL:    {"direction": "up|down|left|right", "delta_total": int, "duration_s": float,
+                        "ticks": int, "start_x": int, "start_y": int, "end_x": int, "end_y": int}
+      MOUSE_HEATMAP_TICK: {"app": str, "minute_bucket": int,           # unix-epoch-minute
+                           "grid": dict[str, int],                     # "row,col" → count
+                           "grid_size": int, "screen_size": [int, int]}
+      IDLE_START:      {"last_input_ts": float}
+      IDLE_END:        {"idle_started_at": float, "idle_duration_s": float}
       CLIPBOARD_COPY:  {"content": str, "content_type": "text|html|image", "char_count": int}
       CLIPBOARD_PASTE: {"content": str, "target_app": str}
       URL_VISIT:       {"url": str, "title": str, "referrer": str, "visit_duration_s": float}
@@ -107,6 +123,16 @@ class DocState:
                          "sheet_name": str, "prev_sheet": str, "sheet_index": int}
       DOC_NOTE_OPEN:    {"doc_type": "notes", "note_title": str, "notebook": str,
                          "doc_path": str}
+      DOC_CONTENT:      {"doc_type": str, "doc_name": str, "doc_path": str, "app": str,
+                         "item_kind": "slide|page|sheet|note", "item_index": int,
+                         "item_label": str,            # slide title / section heading / sheet name
+                         "text": str,                  # what the user read (slimmed to ~300 chars in SQLite;
+                                                       #   full text embedded in the vector store)
+                         "text_chars": int, "full_chars_indexed": int,
+                         "dwell_s": float,             # how long they had been on it when captured
+                         "revisit_count": int,         # 1 = first visit, >1 = came back to it
+                         "source": "ocr|app_model",    # how the text was obtained
+                         "content_hash": str}
     """
     doc_type: str = ""       # presentation|document|spreadsheet|notes|pdf
     doc_name: str = ""       # filename without path

@@ -16,6 +16,51 @@ class MacOSAdapter(PlatformAdapter):
     def name(self) -> str:
         return "macos"
 
+    def get_element_at(self, x: int, y: int) -> dict | None:
+        """Resolve the AX element under (x, y) via
+        ``AXUIElementCopyElementAtPosition``. Best-effort; returns None when
+        PyObjC isn't available or accessibility permissions weren't granted."""
+        try:
+            # ApplicationServices ships these symbols on macOS 10.x+.
+            from ApplicationServices import (  # type: ignore
+                AXUIElementCreateSystemWide,
+                AXUIElementCopyElementAtPosition,
+                AXUIElementCopyAttributeValue,
+            )
+        except Exception:
+            return None
+
+        try:
+            sysw = AXUIElementCreateSystemWide()
+            err, elem = AXUIElementCopyElementAtPosition(sysw, float(x), float(y), None)
+            if err or elem is None:
+                return None
+
+            def _attr(name: str):
+                try:
+                    e, val = AXUIElementCopyAttributeValue(elem, name, None)
+                    return val if not e else None
+                except Exception:
+                    return None
+
+            role = _attr("AXRole") or ""
+            label = (
+                _attr("AXTitle")
+                or _attr("AXDescription")
+                or _attr("AXValue")
+                or ""
+            )
+            value = _attr("AXValue") or ""
+            return {
+                "role": str(role),
+                "label": str(label)[:200],
+                "value": str(value)[:200] if value and value != label else "",
+                "app": "",  # filled in by sensor (already knows active app)
+            }
+        except Exception as e:
+            logger.debug("get_element_at failed: %s", e)
+            return None
+
     def get_active_window(self) -> tuple[str, str]:
         try:
             from AppKit import NSWorkspace  # type: ignore

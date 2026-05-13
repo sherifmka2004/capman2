@@ -17,7 +17,14 @@ from capman.events import Event, EventType, Session
 
 logger = logging.getLogger(__name__)
 
-_INSIGNIFICANT = frozenset({EventType.WINDOW_FOCUS, EventType.WINDOW_BLUR, EventType.MOUSE_CLICK})
+_INSIGNIFICANT = frozenset({
+    EventType.WINDOW_FOCUS, EventType.WINDOW_BLUR,
+    EventType.MOUSE_CLICK,                    # see _is_significant: clicks WITH element override this
+    EventType.MOUSE_HEATMAP_TICK,
+})
+
+# Events that always force-close the current session (e.g. user went AFK).
+_HARD_BREAK = frozenset({EventType.IDLE_START})
 
 
 class SessionDetector:
@@ -104,6 +111,11 @@ class SessionDetector:
         return None
 
     def _is_significant(self, event: Event) -> bool:
+        # A click WITH a resolved UI element is meaningful — promote it past
+        # the _INSIGNIFICANT blocklist that catches raw {x,y} clicks.
+        if event.type == EventType.MOUSE_CLICK:
+            element = (event.payload or {}).get("element") or {}
+            return bool((element.get("label") or "").strip())
         if event.type in _INSIGNIFICANT:
             return False
         if event.type == EventType.KEYSTROKE:
@@ -114,6 +126,10 @@ class SessionDetector:
         if self._current is None:
             return False
         now = event.ts
+
+        # IDLE_START → user just went AFK; close the session immediately.
+        if event.type in _HARD_BREAK:
+            return True
 
         # Hard time break
         if now - self._current.started_at > self.hard_break_s:

@@ -16,6 +16,27 @@ class WindowsAdapter(PlatformAdapter):
     def name(self) -> str:
         return "windows"
 
+    def get_element_at(self, x: int, y: int) -> dict | None:
+        """Resolve the UIAutomation element under (x, y). Best-effort; returns
+        None when ``uiautomation`` isn't installed."""
+        try:
+            import uiautomation as auto  # type: ignore
+        except Exception:
+            return None
+        try:
+            ctrl = auto.ControlFromPoint(int(x), int(y))
+            if not ctrl:
+                return None
+            return {
+                "role": str(getattr(ctrl, "ControlTypeName", "")),
+                "label": str(getattr(ctrl, "Name", ""))[:200],
+                "value": "",
+                "app": "",
+            }
+        except Exception as e:
+            logger.debug("get_element_at (UIAutomation) failed: %s", e)
+            return None
+
     def get_active_window(self) -> tuple[str, str]:
         try:
             import win32gui  # type: ignore

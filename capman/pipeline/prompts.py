@@ -339,6 +339,51 @@ def build_event_narrative(session) -> str:
             nb_str = f" [{notebook}]" if notebook else ""
             lines.append(f"{prefix} NOTE    | {app:<12} | opened \"{note}\"{nb_str}")
 
+        elif etype == EventType.MOUSE_CLICK:
+            element = p.get("element") or {}
+            label = (element.get("label") or "").strip()
+            # Only render clicks where we know what was clicked. Raw (x,y)
+            # adds no useful signal for the LLM.
+            if label:
+                role = element.get("role") or ""
+                role_str = f"{role} " if role else ""
+                lines.append(f"{prefix} CLICK   | {app:<12} | {role_str}\"{label[:80]}\"")
+
+        elif etype == EventType.MOUSE_SCROLL:
+            ticks = int(p.get("ticks", 0) or 0)
+            dur = float(p.get("duration_s", 0) or 0)
+            # Only render meaningful scrolls — tiny taps add noise.
+            if ticks > 20 or dur > 5:
+                direction = p.get("direction", "")
+                delta = int(p.get("delta_total", 0) or 0)
+                lines.append(
+                    f"{prefix} SCROLL  | {app:<12} | {direction} burst "
+                    f"({dur:.1f}s, {ticks} ticks, Δ{delta}px)"
+                )
+
+        elif etype == EventType.IDLE_START:
+            lines.append(f"{prefix} AFK     | {'—':<12} | user went idle")
+
+        elif etype == EventType.IDLE_END:
+            dur = float(p.get("idle_duration_s", 0) or 0)
+            lines.append(f"{prefix} AFK     | {'—':<12} | user returned (away {dur:.0f}s)")
+
+        elif etype == EventType.DOC_CONTENT:
+            doc_name = p.get("doc_name", "") or p.get("doc_path", "") or "?"
+            kind = p.get("item_kind", "unit")
+            idx = p.get("item_index", 0)
+            label = p.get("item_label", "")
+            label_str = f' "{label}"' if label else ""
+            src = p.get("source", "")
+            dwell = p.get("dwell_s", 0)
+            full_chars = p.get("full_chars_indexed", p.get("text_chars", 0))
+            text = (p.get("text", "") or "").strip()
+            excerpt = text[:300].replace("\n", " ")
+            lines.append(
+                f"{prefix} READ    | {app:<12} | {doc_name} {kind} {idx}{label_str}"
+                f" (dwell {dwell:.0f}s, {full_chars} chars via {src}): {excerpt}"
+            )
+
         elif etype == EventType.USER_CLICK:
             el = p.get("element", {}) or {}
             text = el.get("text", "")[:50] or el.get("aria", "")[:50]

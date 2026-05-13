@@ -26,6 +26,37 @@ class PlatformAdapter(ABC):
         """
         return parse_doc_state_from_title(app, window_title)
 
+    def get_element_at(self, x: int, y: int) -> dict | None:
+        """
+        Best-effort accessibility-tree lookup for the UI element under screen
+        coordinate (x, y). Returns a small dict
+        ``{role, label, value?, app?, bbox?}`` or None when no element can be
+        resolved (off-screen, no AX permission, or platform doesn't implement).
+
+        Used by `MouseSensor` to turn a raw click coordinate into "clicked the
+        Run-all button in PyCharm". Implementations MUST be fast (< 30 ms
+        target) and MUST NOT raise — return None on any failure. The sensor
+        wraps the call in a hard timeout regardless.
+
+        Default returns None so the sensor degrades gracefully on platforms
+        without an implementation or when optional deps (PyObjC / pyatspi /
+        uiautomation) aren't installed.
+        """
+        return None
+
+    def get_document_visible_text(self, app: str, window_title: str) -> str | None:
+        """
+        Optional best-effort hook used by `capman.document.AppModelExtractor` to
+        pull the *text the user is currently looking at* (current slide body,
+        page paragraphs, visible cell range, note body) directly from the app's
+        own model — AppleScript on macOS, AT-SPI / accessibility on Linux,
+        UIAutomation on Windows.
+
+        Default returns None: the document-content tracker silently falls back
+        to OCR. Subclasses override per-platform / per-app as adapters land.
+        """
+        return None
+
     @property
     @abstractmethod
     def name(self) -> str:
