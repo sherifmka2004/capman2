@@ -174,7 +174,10 @@ class PipelineRunner:
         duration = (session.ended_at or time.time()) - session.started_at
 
         # Always write document nodes immediately — no minimum event/duration gate
-        await self._write_document_nodes(session)
+        try:
+            await self._write_document_nodes(session)
+        except Exception as e:
+            logger.debug("Document node write skipped: %s", e)
 
         if len(session.events) >= min_events and duration >= min_duration:
             await self._analysis_queue.put(session)
