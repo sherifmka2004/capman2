@@ -139,7 +139,7 @@ content_extractor_order      = ["app_model", "ocr"]
 [pipeline.session]
 idle_threshold_s = 90
 cool_period_s = 120
-hard_break_s = 1200
+hard_break_s = 600
 min_session_events = 5
 min_session_duration_s = 120
 
@@ -148,7 +148,7 @@ enabled = true
 pass1_model = "claude-haiku-4-5-20251001"
 pass2_model = "claude-sonnet-4-6"
 pass3_model = "claude-haiku-4-5-20251001"
-batch_delay_s = 300
+batch_delay_s = 60
 cot_reusability_threshold = 0.5
 
 [storage]
