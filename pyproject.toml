@@ -2,7 +2,7 @@
 name = "capman2"
 version = "0.1.0"
 description = "Personal cognitive workflow capture engine — clone expert knowledge and thinking patterns"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "pynput>=1.7.7",
     "mss>=9.0.2",
@@ -32,11 +32,24 @@ build-backend = "hatchling.build"
 packages = ["capman"]
 
 [tool.uv]
+override-dependencies = [
+    # onnxruntime 1.21+ dropped macOS x86_64 (Intel) wheels; cap to last supported version
+    "onnxruntime>=1.19.2,<1.21 ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
 dev-dependencies = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-mock>=3.14.0",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
