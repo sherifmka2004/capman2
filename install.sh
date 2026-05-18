@@ -136,7 +136,14 @@ if $IS_MACOS; then
         <key>HOME</key>
         <string>$HOME</string>
         <key>PATH</key>
-        <string>$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin</string>$(
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    printf '\n        <key>ANTHROPIC_API_KEY</key>\n        <string>%s</string>' "$ANTHROPIC_API_KEY"
+  fi
+  if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+    printf '\n        <key>OPENROUTER_API_KEY</key>\n        <string>%s</string>' "$OPENROUTER_API_KEY"
+  fi
+)
     </dict>
 
     <key>RunAtLoad</key>
