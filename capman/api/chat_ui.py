@@ -404,6 +404,8 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
     <div class="brain-hdr">
       <span>🧠 Mental Map &mdash; Real-time Knowledge Atlas</span>
       <span id="brain-updated" style="color:#4a4468;font-size:11px;margin-left:14px"></span>
+      <span id="brain-categorized" style="color:#4a4468;font-size:10px;margin-left:10px"></span>
+      <button id="brain-recategorize-btn" style="margin-left:auto;background:#0d0b1a;border:1px solid #3a2a6a;color:#a78bfa;border-radius:5px;padding:3px 10px;font-size:11px;cursor:pointer" title="Ask AI to re-derive your knowledge domains from recent sessions">✦ Recategorize</button>
       <button id="brain-refresh-btn">&#8635; Refresh</button>
     </div>
     <div class="brain-stage">
@@ -532,6 +534,7 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
       <span id="brain-stat-sessions">—</span>
       <span id="brain-stat-domains">—</span>
       <span id="brain-stat-conns">—</span>
+      <span id="brain-stat-pct" style="color:#4a4468;font-size:10px;margin-left:auto">—</span>
     </div>
   </div>
 </div>
@@ -1082,6 +1085,19 @@ function loadBrain() {
   fetchBrain();
   _brainTimer = setInterval(fetchBrain, 30000);
   document.getElementById('brain-refresh-btn').addEventListener('click', fetchBrain);
+  document.getElementById('brain-recategorize-btn').addEventListener('click', () => {
+    const btn = document.getElementById('brain-recategorize-btn');
+    btn.textContent = '⏳ Recategorizing…';
+    btn.disabled = true;
+    fetch('/brain/recategorize', {method: 'POST'})
+      .then(r => r.json())
+      .then(d => {
+        btn.textContent = d.ok ? '✓ Done' : '✗ Failed';
+        setTimeout(() => { btn.textContent = '✦ Recategorize'; btn.disabled = false; }, 3000);
+        if (d.ok) fetchBrain();
+      })
+      .catch(() => { btn.textContent = '✗ Error'; btn.disabled = false; });
+  });
 }
 
 function fetchBrain() {
@@ -1101,16 +1117,28 @@ function mkEl(tag, attrs) {
 }
 
 function renderBrain(data) {
-  // Timestamp
+  // Data-freshness timestamp
   const elapsed = Math.round(Date.now() / 1000 - (data.last_updated || 0));
   document.getElementById('brain-updated').textContent =
     elapsed < 5 ? 'just now' : elapsed < 60 ? elapsed + 's ago' : Math.round(elapsed/60) + 'm ago';
+
+  // Last-categorized timestamp
+  const catEl = document.getElementById('brain-categorized');
+  if (data.last_categorized) {
+    const catAge = Math.round((Date.now() / 1000 - data.last_categorized) / 3600);
+    catEl.textContent = catAge < 1 ? 'AI-categorized <1h ago' : `AI-categorized ${catAge}h ago`;
+  } else {
+    catEl.textContent = 'default categories';
+  }
 
   // Footer
   const active = (data.categories || []).filter(c => c.weight > 0.05).length;
   document.getElementById('brain-stat-sessions').textContent = (data.total_sessions || 0) + ' sessions analysed';
   document.getElementById('brain-stat-domains').textContent = active + ' active knowledge domains';
   document.getElementById('brain-stat-conns').textContent = (data.connections || []).length + ' neural connections mapped';
+  // Sanity-check: show that %s sum to ~100
+  const pctSum = (data.categories || []).reduce((s, c) => s + (c.pct || 0), 0);
+  document.getElementById('brain-stat-pct').textContent = `${Math.round(pctSum)}% coverage`;
 
   // Clear dynamic layers
   ['domain-glows','brain-connections','brain-sparks','brain-hotspots',
@@ -1218,8 +1246,8 @@ function renderBrain(data) {
     const [hx, hy] = cat.hotspot;
     const isRight = lx > 450, isTop = ly < 40;
     const alpha = Math.min(1, 0.35 + cat.weight * 1.3);
-    const pct = Math.round(cat.weight * 100);
-    const barW = Math.round((W - 20) * cat.weight);
+    const pct = Math.round(cat.pct ?? cat.weight * 100);  // proportional %, sums to 100
+    const barW = Math.round((W - 20) * cat.weight);  // bar still uses relative weight for visual
 
     const g = mkEl('g', {});
     g.style.cssText = `opacity:${alpha};animation:labelIn 0.7s ease both`;

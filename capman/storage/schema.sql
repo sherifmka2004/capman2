@@ -107,3 +107,13 @@ CREATE INDEX IF NOT EXISTS idx_gaps_concept ON knowledge_gaps(concept);
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
+
+-- Dynamic brain domain definitions (LLM-computed daily, overrides hardcoded DOMAINS)
+CREATE TABLE IF NOT EXISTS brain_domains (
+    id          TEXT PRIMARY KEY,   -- domain key e.g. 'research'
+    computed_at REAL NOT NULL,
+    name        TEXT NOT NULL,
+    color       TEXT NOT NULL DEFAULT '#c084fc',
+    glow        TEXT NOT NULL DEFAULT '#7c3aed',
+    keywords    TEXT NOT NULL DEFAULT '[]'   -- JSON array of strings
+);

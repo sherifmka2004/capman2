@@ -293,6 +293,42 @@ class TimelineDB:
             row = await cur.fetchone()
         return row[0]
 
+    async def save_brain_domains(self, domains: list[dict], computed_at: float) -> None:
+        """Persist LLM-computed domain definitions (name + keywords per region)."""
+        await self._db.executemany(
+            """INSERT OR REPLACE INTO brain_domains (id, computed_at, name, color, glow, keywords)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (d["id"], computed_at, d["name"], d.get("color", "#c084fc"),
+                 d.get("glow", "#7c3aed"), json.dumps(d.get("keywords", [])))
+                for d in domains
+            ],
+        )
+        await self._db.commit()
+
+    async def load_brain_domains(self) -> list[dict] | None:
+        """Return stored dynamic domain definitions, or None if table is empty."""
+        try:
+            async with self._db.execute(
+                "SELECT id, computed_at, name, color, glow, keywords FROM brain_domains"
+            ) as cur:
+                rows = await cur.fetchall()
+            if not rows:
+                return None
+            return [
+                {
+                    "id": r["id"],
+                    "computed_at": r["computed_at"],
+                    "name": r["name"],
+                    "color": r["color"],
+                    "glow": r["glow"],
+                    "keywords": json.loads(r["keywords"] or "[]"),
+                }
+                for r in rows
+            ]
+        except Exception:
+            return None
+
     async def close(self) -> None:
         if self._db:
             await self._db.close()

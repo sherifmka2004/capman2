@@ -38,6 +38,7 @@ class PipelineRunner:
         """Main pipeline loop + analysis consumer."""
         analysis_task = asyncio.create_task(self._analysis_loop())
         timeout_task = asyncio.create_task(self._timeout_checker())
+        recategorize_task = asyncio.create_task(self._daily_recategorize_loop())
 
         try:
             while not self._stop.is_set():
@@ -59,9 +60,11 @@ class PipelineRunner:
 
             analysis_task.cancel()
             timeout_task.cancel()
+            recategorize_task.cancel()
             try:
                 await analysis_task
                 await timeout_task
+                await recategorize_task
             except asyncio.CancelledError:
                 pass
 
@@ -316,6 +319,24 @@ class PipelineRunner:
             completed, _ = self._detector.check_timeouts()
             if completed:
                 await self._close_session(completed)
+
+    async def _daily_recategorize_loop(self) -> None:
+        """Run LLM brain recategorization once per day (checks every hour)."""
+        import datetime
+        last_run_day: int | None = None
+        await asyncio.sleep(300)  # give startup a few minutes to settle
+        while True:
+            today = datetime.date.today().toordinal()
+            if last_run_day != today:
+                try:
+                    from capman.pipeline.brain_recategorizer import recategorize
+                    ok = await recategorize(self._db, self._config)
+                    if ok:
+                        last_run_day = today
+                        logger.info("Daily brain recategorization complete")
+                except Exception as e:
+                    logger.debug("Daily brain recategorization skipped: %s", e)
+            await asyncio.sleep(3600)
 
     def stop(self) -> None:
         self._stop.set()
