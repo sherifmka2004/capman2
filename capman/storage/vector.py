@@ -48,8 +48,10 @@ def _hash(s: str) -> str:
 class VectorStore:
     COLLECTION = "capman_knowledge"
 
-    def __init__(self, chroma_path: str):
+    def __init__(self, chroma_path: str, chunk_chars: int = CHUNK_CHARS, chunk_overlap: int = CHUNK_OVERLAP):
         self._path = str(Path(chroma_path).expanduser())
+        self._chunk_chars = chunk_chars
+        self._chunk_overlap = chunk_overlap
         self._client = None
         self._collection = None
 
@@ -112,7 +114,7 @@ class VectorStore:
 
         ts = ts or time.time()
         url_hash = _hash(url)
-        chunks = _chunk_text(text)
+        chunks = _chunk_text(text, self._chunk_chars, self._chunk_overlap)
         if not chunks:
             return 0
 
@@ -169,7 +171,7 @@ class VectorStore:
         ts = ts or time.time()
         doc_id = doc_path or doc_name or "unknown"
         unit_hash = _hash(f"{doc_id}|{item_kind}|{item_index}|{item_label}")
-        chunks = _chunk_text(text)
+        chunks = _chunk_text(text, self._chunk_chars, self._chunk_overlap)
         if not chunks:
             return 0
 

@@ -46,6 +46,8 @@ class SessionAnalyzer:
         self._pass2_model = cfg.get("pass2_model", "claude-sonnet-4-6")
         self._pass3_model = cfg.get("pass3_model", "claude-haiku-4-5-20251001")
         self._cot_threshold = cfg.get("cot_reusability_threshold", 0.5)
+        self._max_tokens = int(cfg.get("max_tokens", 2048))
+        self._http_timeout_s = float(cfg.get("http_timeout_s", 60.0))
 
         # Auto-detect backend from environment
         if os.environ.get("OPENROUTER_API_KEY"):
@@ -226,7 +228,7 @@ class SessionAnalyzer:
     def _call_anthropic(self, model: str, prompt: str) -> dict | list:
         resp = self._client.messages.create(
             model=model,
-            max_tokens=2048,
+            max_tokens=self._max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
@@ -248,10 +250,10 @@ class SessionAnalyzer:
             },
             json={
                 "model": or_model,
-                "max_tokens": 2048,
+                "max_tokens": self._max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
             },
-            timeout=60.0,
+            timeout=self._http_timeout_s,
         )
         resp.raise_for_status()
         raw = resp.json()["choices"][0]["message"]["content"].strip()

@@ -156,6 +156,11 @@ pass2_model = "claude-sonnet-4-6"
 pass3_model = "claude-haiku-4-5-20251001"
 batch_delay_s = 60
 cot_reusability_threshold = 0.5
+max_tokens = 2048
+http_timeout_s = 60.0
+
+[pipeline.runner]
+excerpt_chars = 300          # chars kept in SQLite for page/doc content (full text goes to vector store)
 
 [storage]
 sqlite_path = "~/.capman/timeline.db"
@@ -163,6 +168,27 @@ chroma_path = "~/.capman/chroma"
 knowledge_dir = "~/.capman/knowledge"
 obsidian_vault = ""
 
+[storage.vector]
+chunk_chars = 800            # text chunk size for embedding
+chunk_overlap = 100          # overlap between consecutive chunks
+
 [api]
 host = "0.0.0.0"
 port = 7331
+
+[api.chat]
+model = "anthropic/claude-sonnet-4-6"   # model used for the chat assistant
+max_tokens = 1024
+http_timeout_s = 60.0
+# Context window limits (how many items to pull from each source)
+recent_sessions = 10
+knowledge_triples = 40
+recent_urls = 25
+recent_searches = 20
+recent_commands = 25
+recent_files = 60
+vector_top_k = 5             # semantic search hits for the user's question
+doc_top_k = 6                # document content hits
+page_top_k = 6               # visited-page content hits
+playbook_top_k = 3           # troubleshooting playbook hits
+activity_window_days = 7     # how many days back to show active/AFK breakdown

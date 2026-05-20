@@ -42,6 +42,7 @@ async def _build_context(question: str, request: Request) -> str:
     config = request.app.state.config
     db = request.app.state.db
     sections: list[str] = []
+    _chat = config.get("api", {}).get("chat", {})
 
     # 1. Vector search — semantically relevant sessions and nodes
     try:
@@ -49,7 +50,7 @@ async def _build_context(question: str, request: Request) -> str:
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
         vs = VectorStore(chroma_path)
         if vs.count() > 0:
-            results = vs.search(question, top_k=5)
+            results = vs.search(question, top_k=int(_chat.get("vector_top_k", 5)))
             if results:
                 lines = []
                 for r in results:
@@ -66,7 +67,8 @@ async def _build_context(question: str, request: Request) -> str:
                           sa.methodology_tags, sa.chain_of_thought, sa.knowledge_acquired
                    FROM sessions s
                    JOIN session_analyses sa ON s.id = sa.session_id
-                   ORDER BY s.started_at DESC LIMIT 10"""
+                   ORDER BY s.started_at DESC LIMIT ?""",
+                (int(_chat.get("recent_sessions", 10)),)
             ) as cur:
                 rows = await cur.fetchall()
 
@@ -101,7 +103,8 @@ async def _build_context(question: str, request: Request) -> str:
             async with db._db.execute(
                 """SELECT subject, predicate, object, confidence
                    FROM knowledge_triples
-                   ORDER BY confidence DESC, last_observed DESC LIMIT 40"""
+                   ORDER BY confidence DESC, last_observed DESC LIMIT ?""",
+                (int(_chat.get("knowledge_triples", 40)),)
             ) as cur:
                 rows = await cur.fetchall()
 
@@ -120,7 +123,8 @@ async def _build_context(question: str, request: Request) -> str:
             async with db._db.execute(
                 """SELECT payload, ts FROM events
                    WHERE type='url_visit'
-                   ORDER BY ts DESC LIMIT 25"""
+                   ORDER BY ts DESC LIMIT ?""",
+                (int(_chat.get("recent_urls", 25)),)
             ) as cur:
                 rows = await cur.fetchall()
             if rows:
@@ -146,7 +150,8 @@ async def _build_context(question: str, request: Request) -> str:
             async with db._db.execute(
                 """SELECT payload, ts FROM events
                    WHERE type='search_query'
-                   ORDER BY ts DESC LIMIT 20"""
+                   ORDER BY ts DESC LIMIT ?""",
+                (int(_chat.get("recent_searches", 20)),)
             ) as cur:
                 rows = await cur.fetchall()
             if rows:
@@ -171,7 +176,8 @@ async def _build_context(question: str, request: Request) -> str:
             async with db._db.execute(
                 """SELECT payload, ts FROM events
                    WHERE type='shell_command'
-                   ORDER BY ts DESC LIMIT 25"""
+                   ORDER BY ts DESC LIMIT ?""",
+                (int(_chat.get("recent_commands", 25)),)
             ) as cur:
                 rows = await cur.fetchall()
             if rows:
@@ -194,7 +200,8 @@ async def _build_context(question: str, request: Request) -> str:
             async with db._db.execute(
                 """SELECT type, payload, ts FROM events
                    WHERE type IN ('file_open','file_save','file_delete','file_rename','code_diff')
-                   ORDER BY ts DESC LIMIT 60"""
+                   ORDER BY ts DESC LIMIT ?""",
+                (int(_chat.get("recent_files", 60)),)
             ) as cur:
                 rows = await cur.fetchall()
             if rows:
@@ -243,7 +250,7 @@ async def _build_context(question: str, request: Request) -> str:
         from capman.storage.vector import VectorStore
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
         vs = VectorStore(chroma_path)
-        doc_hits = vs.search(question, top_k=6, types=["doc"])
+        doc_hits = vs.search(question, top_k=int(_chat.get("doc_top_k", 6)), types=["doc"])
         if doc_hits:
             lines = []
             for h in doc_hits:
@@ -272,7 +279,7 @@ async def _build_context(question: str, request: Request) -> str:
         from capman.storage.vector import VectorStore
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
         vs = VectorStore(chroma_path)
-        page_hits = vs.search(question, top_k=6, types=["page"])
+        page_hits = vs.search(question, top_k=int(_chat.get("page_top_k", 6)), types=["page"])
         if page_hits:
             lines = []
             for h in page_hits:
@@ -293,7 +300,7 @@ async def _build_context(question: str, request: Request) -> str:
         from capman.storage.vector import VectorStore
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
         vs = VectorStore(chroma_path)
-        pb_hits = vs.search(question, top_k=3, types=["playbook"])
+        pb_hits = vs.search(question, top_k=int(_chat.get("playbook_top_k", 3)), types=["playbook"])
         if pb_hits and db:
             lines = []
             for h in pb_hits:
@@ -336,7 +343,7 @@ async def _build_context(question: str, request: Request) -> str:
     # 6e. Active vs AFK periods (last 7 days, totals by day)
     if db:
         try:
-            since = time.time() - 7 * 86400
+            since = time.time() - int(_chat.get("activity_window_days", 7)) * 86400
             async with db._db.execute(
                 """SELECT type, payload, ts FROM events
                    WHERE type IN ('idle_start','idle_end') AND ts > ?
@@ -427,9 +434,13 @@ Always ground your answers in the captured data below. Be specific — mention a
 Answer conversationally but precisely. Reference specific sessions, URLs, or patterns from the data when they are relevant to the question."""
 
 
-async def _call_openrouter(messages: list[dict], api_key: str) -> str:
+async def _call_openrouter(messages: list[dict], api_key: str, config: dict) -> str:
     """One-shot call to OpenRouter, returns the assistant's full text."""
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    _chat = config.get("api", {}).get("chat", {})
+    model = _chat.get("model", CHAT_MODEL)
+    max_tokens = int(_chat.get("max_tokens", 1024))
+    timeout = float(_chat.get("http_timeout_s", 60.0))
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             OPENROUTER_URL,
             headers={
@@ -439,9 +450,9 @@ async def _call_openrouter(messages: list[dict], api_key: str) -> str:
                 "X-Title": "capman2-chat",
             },
             json={
-                "model": CHAT_MODEL,
+                "model": model,
                 "messages": messages,
-                "max_tokens": 1024,
+                "max_tokens": max_tokens,
             },
         )
         resp.raise_for_status()
@@ -464,7 +475,7 @@ async def chat_message(body: ChatRequest, request: Request):
     messages += [{"role": m.role, "content": m.content} for m in body.messages]
 
     try:
-        reply = await _call_openrouter(messages, api_key)
+        reply = await _call_openrouter(messages, api_key, request.app.state.config)
         return {"reply": reply}
     except Exception as e:
         logger.error("Chat call failed: %s", e)

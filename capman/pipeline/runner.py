@@ -28,6 +28,11 @@ class PipelineRunner:
         self._stop = asyncio.Event()
         self._analysis_queue: asyncio.Queue[Session] = asyncio.Queue()
         self._batch_delay_s: float = config.get("pipeline", {}).get("analysis", {}).get("batch_delay_s", 300)
+        _runner_cfg = config.get("pipeline", {}).get("runner", {})
+        self._excerpt_chars: int = int(_runner_cfg.get("excerpt_chars", 300))
+        _vec_cfg = config.get("storage", {}).get("vector", {})
+        self._chunk_chars: int = int(_vec_cfg.get("chunk_chars", 800))
+        self._chunk_overlap: int = int(_vec_cfg.get("chunk_overlap", 100))
 
     async def run(self) -> None:
         """Main pipeline loop + analysis consumer."""
@@ -91,7 +96,7 @@ class PipelineRunner:
             ))
             event.payload = {
                 **event.payload,
-                "excerpt": full[:300],          # keep just a 300-char snippet for browsing
+                "excerpt": full[:self._excerpt_chars],
                 "full_chars_indexed": len(full),
             }
 
@@ -110,7 +115,7 @@ class PipelineRunner:
             ))
             event.payload = {
                 **event.payload,
-                "text": full[:300],             # browsable excerpt only
+                "text": full[:self._excerpt_chars],
                 "full_chars_indexed": len(full),
             }
 
@@ -128,7 +133,7 @@ class PipelineRunner:
         try:
             from capman.storage.vector import VectorStore
             chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = VectorStore(chroma_path)
+            vs = VectorStore(chroma_path, self._chunk_chars, self._chunk_overlap)
             count = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: vs.add_page_text(url=url, title=title, text=text, ts=ts, headings=headings),
@@ -147,7 +152,7 @@ class PipelineRunner:
         try:
             from capman.storage.vector import VectorStore
             chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = VectorStore(chroma_path)
+            vs = VectorStore(chroma_path, self._chunk_chars, self._chunk_overlap)
             count = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: vs.add_doc_text(
