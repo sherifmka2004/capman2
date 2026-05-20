@@ -147,7 +147,7 @@ idle_threshold_s = 90
 cool_period_s = 120
 hard_break_s = 600
 min_session_events = 5
-min_session_duration_s = 120
+min_session_duration_s = 60
 
 [pipeline.analysis]
 enabled = true
