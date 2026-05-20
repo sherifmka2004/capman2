@@ -285,6 +285,37 @@ CHAT_HTML = """<!DOCTYPE html>
 
   #scroll-anchor { height: 1px; }
   @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+  /* ── Brain Map ── */
+  #view-brain {
+    flex: 1; overflow: hidden; display: flex; flex-direction: column;
+    background: radial-gradient(ellipse at 45% 45%, #0e0b1e 0%, #060409 55%, #020204 100%);
+  }
+  .brain-wrap { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .brain-hdr {
+    display: flex; align-items: center; padding: 10px 20px; flex-shrink: 0;
+    border-bottom: 1px solid #1a1530; font-size: 13px; color: #9d84c9; font-weight: 600;
+  }
+  .brain-hdr button {
+    margin-left: auto; background: none; border: 1px solid #2a2245; color: #666;
+    padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;
+  }
+  .brain-hdr button:hover { color: #aaa; border-color: #444; }
+  .brain-stage {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 8px 16px; overflow: hidden; min-height: 0;
+  }
+  #brain-svg { width: 100%; max-width: 980px; height: auto; overflow: visible; display: block; }
+  .brain-footer {
+    display: flex; justify-content: center; gap: 28px; padding: 7px 20px;
+    border-top: 1px solid #1a1530; flex-shrink: 0; font-size: 11px; color: #3d3a52;
+  }
+  .brain-footer span::before { content: "· "; color: #2a2245; }
+  @keyframes brainBreathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.013)} }
+  @keyframes domPulse     { 0%,100%{opacity:var(--bop)} 50%{opacity:calc(var(--bop)*1.5)} }
+  @keyframes connFlow     { to{stroke-dashoffset:-20} }
+  @keyframes labelIn      { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+  @keyframes ringPulse    { 0%{r:10;opacity:.7} 100%{r:30;opacity:0} }
 </style>
 </head>
 <body>
@@ -301,6 +332,7 @@ CHAT_HTML = """<!DOCTYPE html>
   <div class="tab" data-view="sessions">📅 Sessions <span class="tab-count" id="count-sessions">0</span></div>
   <div class="tab" data-view="storage">💾 Storage <span class="tab-count" id="count-storage">—</span></div>
   <div class="tab" data-view="context">⚡ Context Suggest</div>
+  <div class="tab" data-view="brain">🧠 Brain Map</div>
 </div>
 
 <!-- Chat view -->
@@ -366,6 +398,144 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
   </div>
 </div>
 
+<!-- Brain Map view -->
+<div class="view hidden" id="view-brain">
+  <div class="brain-wrap">
+    <div class="brain-hdr">
+      <span>🧠 Mental Map &mdash; Real-time Knowledge Atlas</span>
+      <span id="brain-updated" style="color:#4a4468;font-size:11px;margin-left:14px"></span>
+      <button id="brain-refresh-btn">&#8635; Refresh</button>
+    </div>
+    <div class="brain-stage">
+      <svg id="brain-svg" viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="bgBrain" cx="40%" cy="35%" r="62%">
+            <stop offset="0%"   stop-color="#24183e"/>
+            <stop offset="55%"  stop-color="#16112a"/>
+            <stop offset="100%" stop-color="#0c0918"/>
+          </radialGradient>
+          <radialGradient id="bgCereb" cx="40%" cy="35%" r="62%">
+            <stop offset="0%"   stop-color="#1d1632"/>
+            <stop offset="100%" stop-color="#0c0918"/>
+          </radialGradient>
+          <radialGradient id="specular" cx="20%" cy="16%" r="48%">
+            <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.08"/>
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+          </radialGradient>
+          <filter id="brainShadow" x="-18%" y="-18%" width="136%" height="136%">
+            <feDropShadow dx="0" dy="10" stdDeviation="22" flood-color="#5b21b6" flood-opacity="0.22"/>
+          </filter>
+          <filter id="domGlow" x="-130%" y="-130%" width="360%" height="360%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="24" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <filter id="hotGlow" x="-200%" y="-200%" width="500%" height="500%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <filter id="sparkGlow" x="-300%" y="-300%" width="700%" height="700%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="2.5"/>
+          </filter>
+          <clipPath id="brainClip">
+            <path d="M 305,342 C 242,312 206,232 210,190 C 210,132 262,63 305,62 C 372,40 492,33 555,42 C 635,50 720,122 722,190 C 734,254 702,320 676,344 C 634,367 554,374 504,370 C 430,372 382,372 335,358 Z"/>
+          </clipPath>
+          <clipPath id="cerebClip">
+            <path d="M 578,358 C 604,354 642,362 670,348 C 712,332 734,374 732,415 C 730,444 702,458 670,454 C 630,448 594,428 582,402 C 572,376 570,360 578,358 Z"/>
+          </clipPath>
+          <g id="spark-path-defs"></g>
+        </defs>
+
+        <!-- Ambient aura -->
+        <ellipse cx="464" cy="212" rx="270" ry="190" fill="#4c1d95" opacity="0.18" style="filter:blur(45px)"/>
+
+        <!-- Cerebellum -->
+        <path d="M 578,358 C 604,354 642,362 670,348 C 712,332 734,374 732,415 C 730,444 702,458 670,454 C 630,448 594,428 582,402 C 572,376 570,360 578,358 Z"
+              fill="url(#bgCereb)" stroke="#221a3a" stroke-width="1.5" filter="url(#brainShadow)"/>
+        <g clip-path="url(#cerebClip)" stroke="#0c0918" stroke-width="1.2" fill="none" opacity="0.95">
+          <path d="M 590,365 C 618,361 646,358 670,350"/>
+          <path d="M 592,380 C 618,376 644,373 666,366"/>
+          <path d="M 592,396 C 616,392 640,389 660,383"/>
+          <path d="M 590,411 C 612,408 634,405 652,399"/>
+          <path d="M 586,426 C 606,424 626,421 642,416"/>
+          <path d="M 580,440 C 598,438 616,436 630,432"/>
+          <path d="M 573,452 C 588,450 604,448 618,444"/>
+        </g>
+
+        <!-- Main hemisphere -->
+        <path d="M 305,342 C 242,312 206,232 210,190 C 210,132 262,63 305,62 C 372,40 492,33 555,42 C 635,50 720,122 722,190 C 734,254 702,320 676,344 C 634,367 554,374 504,370 C 430,372 382,372 335,358 Z"
+              fill="url(#bgBrain)" stroke="#221a3a" stroke-width="1.5" filter="url(#brainShadow)"
+              style="transform-origin:464px 208px;animation:brainBreathe 5.5s ease-in-out infinite"/>
+
+        <!-- Domain glow blobs (clipped inside brain) -->
+        <g clip-path="url(#brainClip)" id="domain-glows"
+           style="transform-origin:464px 208px;animation:brainBreathe 5.5s ease-in-out infinite"></g>
+
+        <!-- Sulci — major (thick dark grooves) -->
+        <g clip-path="url(#brainClip)" fill="none" stroke="#09071a" stroke-linecap="round"
+           style="transform-origin:464px 208px;animation:brainBreathe 5.5s ease-in-out infinite">
+          <path stroke-width="2.8" d="M 490,38 C 478,90 460,162 442,235 C 432,272 425,300 422,325"/>
+          <path stroke-width="2.4" d="M 320,260 C 378,246 442,240 508,242 C 562,244 612,250 655,258"/>
+          <path stroke-width="2.2" d="M 575,38 C 580,84 588,135 596,180"/>
+          <path stroke-width="1.8" d="M 522,38 C 510,92 496,164 480,238"/>
+          <path stroke-width="1.5" d="M 252,112 C 305,100 360,96 418,100 C 458,104 480,112 485,124"/>
+          <path stroke-width="1.5" d="M 248,154 C 298,142 345,138 388,142 C 418,145 438,152 440,165"/>
+          <path stroke-width="1.4" d="M 290,204 C 335,196 375,192 412,195 C 438,198 452,205 447,215"/>
+          <path stroke-width="1.5" d="M 320,280 C 380,272 440,267 502,270 C 545,273 586,280 620,288"/>
+          <path stroke-width="1.4" d="M 328,318 C 382,310 435,307 480,310 C 514,313 542,320 568,328"/>
+          <path stroke-width="1.6" d="M 644,98 C 670,120 690,150 696,182 C 700,207 694,232 682,248"/>
+          <path stroke-width="1.3" d="M 678,128 C 700,150 718,178 724,204"/>
+          <path stroke-width="1.5" d="M 538,112 C 558,134 574,164 576,194 C 578,218 564,238 550,248"/>
+          <path stroke-width="1.2" d="M 576,194 C 596,200 620,208 636,220"/>
+          <path stroke-width="1.2" d="M 574,226 C 590,233 608,242 620,252"/>
+          <path stroke-width="1.2" d="M 252,84 C 295,74 342,71 388,74"/>
+          <path stroke-width="1.1" d="M 210,178 C 250,170 280,168 308,170"/>
+        </g>
+
+        <!-- Gyri highlights -->
+        <g clip-path="url(#brainClip)" fill="none" stroke="#2c2450" stroke-width="0.7" opacity="0.55"
+           stroke-linecap="round"
+           style="transform-origin:464px 208px;animation:brainBreathe 5.5s ease-in-out infinite">
+          <path d="M 488,60 C 476,108 460,178 445,250"/>
+          <path d="M 555,55 C 558,100 562,150 568,192"/>
+          <path d="M 340,265 C 395,258 452,254 510,257"/>
+          <path d="M 265,130 C 315,118 368,114 425,118"/>
+          <path d="M 262,172 C 308,162 350,158 390,160"/>
+          <path d="M 658,112 C 682,135 700,164 706,195"/>
+          <path d="M 552,128 C 568,150 580,178 582,205"/>
+        </g>
+
+        <!-- Specular (3D depth) -->
+        <g clip-path="url(#brainClip)"
+           style="transform-origin:464px 208px;animation:brainBreathe 5.5s ease-in-out infinite">
+          <path d="M 305,342 C 242,312 206,232 210,190 C 210,132 262,63 305,62 C 372,40 492,33 555,42 C 635,50 720,122 722,190 C 734,254 702,320 676,344 C 634,367 554,374 504,370 C 430,372 382,372 335,358 Z"
+                fill="url(#specular)"/>
+        </g>
+
+        <!-- Neural connections (JS-generated) -->
+        <g id="brain-connections" fill="none" stroke-linecap="round"></g>
+
+        <!-- Neuron sparks (JS-generated) -->
+        <g id="brain-sparks"></g>
+
+        <!-- Hotspot markers (JS-generated, inside breathing group) -->
+        <g id="brain-hotspots"
+           style="transform-origin:464px 208px;animation:brainBreathe 5.5s ease-in-out infinite"></g>
+
+        <!-- Label cards in margins (JS-generated) -->
+        <g id="brain-labels" font-family="system-ui,-apple-system,sans-serif"></g>
+
+        <!-- Label-to-hotspot connectors (JS-generated) -->
+        <g id="brain-connectors" fill="none" stroke-linecap="round"></g>
+      </svg>
+    </div>
+    <div class="brain-footer">
+      <span id="brain-stat-sessions">—</span>
+      <span id="brain-stat-domains">—</span>
+      <span id="brain-stat-conns">—</span>
+    </div>
+  </div>
+</div>
+
 <!-- Detail modal -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
@@ -385,6 +555,7 @@ const loaders = {
   gaps:      loadGaps,
   sessions:  loadSessions,
   storage:   loadStorage,
+  brain:     loadBrain,
 };
 const loaded = {};
 tabs.forEach(tab => {
@@ -899,6 +1070,192 @@ function doSend() {
     addMessage('assistant', 'Error: ' + err.message);
     sending = false;
     sendBtn.disabled = false;
+  });
+}
+
+// ====================================================================
+// Brain Map
+// ====================================================================
+let _brainTimer = null;
+
+function loadBrain() {
+  fetchBrain();
+  _brainTimer = setInterval(fetchBrain, 30000);
+  document.getElementById('brain-refresh-btn').addEventListener('click', fetchBrain);
+}
+
+function fetchBrain() {
+  fetch('/brain').then(r => r.json()).then(renderBrain).catch(e => console.warn('brain:', e));
+}
+
+const NS = 'http://www.w3.org/2000/svg';
+const XL = 'http://www.w3.org/1999/xlink';
+
+function mkEl(tag, attrs) {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'xlinkHref') el.setAttributeNS(XL, 'xlink:href', v);
+    else el.setAttribute(k, v);
+  }
+  return el;
+}
+
+function renderBrain(data) {
+  // Timestamp
+  const elapsed = Math.round(Date.now() / 1000 - (data.last_updated || 0));
+  document.getElementById('brain-updated').textContent =
+    elapsed < 5 ? 'just now' : elapsed < 60 ? elapsed + 's ago' : Math.round(elapsed/60) + 'm ago';
+
+  // Footer
+  const active = (data.categories || []).filter(c => c.weight > 0.05).length;
+  document.getElementById('brain-stat-sessions').textContent = (data.total_sessions || 0) + ' sessions analysed';
+  document.getElementById('brain-stat-domains').textContent = active + ' active knowledge domains';
+  document.getElementById('brain-stat-conns').textContent = (data.connections || []).length + ' neural connections mapped';
+
+  // Clear dynamic layers
+  ['domain-glows','brain-connections','brain-sparks','brain-hotspots',
+   'brain-labels','brain-connectors','spark-path-defs'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  });
+
+  const cats = data.categories || [];
+  const catMap = Object.fromEntries(cats.map(c => [c.id, c]));
+  const glows   = document.getElementById('domain-glows');
+  const hots    = document.getElementById('brain-hotspots');
+  const conns   = document.getElementById('brain-connections');
+  const sparks  = document.getElementById('brain-sparks');
+  const defs    = document.getElementById('spark-path-defs');
+  const labels  = document.getElementById('brain-labels');
+  const connectors = document.getElementById('brain-connectors');
+
+  // ── Domain glow blobs ──
+  cats.forEach(cat => {
+    if (cat.weight < 0.03) return;
+    const r = 55 + cat.weight * 85;
+    const op = 0.10 + cat.weight * 0.38;
+    const speed = (cat.last_active_h !== null && cat.last_active_h < 3) ? '2.2s' : '4.5s';
+    const c = mkEl('circle', {cx: cat.hotspot[0], cy: cat.hotspot[1], r, fill: cat.color, filter:'url(#domGlow)'});
+    c.style.cssText = `opacity:${op};--bop:${op};animation:domPulse ${speed} ease-in-out infinite`;
+    glows.appendChild(c);
+  });
+
+  // ── Hotspot markers ──
+  cats.forEach(cat => {
+    if (cat.weight < 0.03) return;
+    const [cx, cy] = cat.hotspot;
+
+    // Pulsing ring for hot regions
+    if (cat.weight > 0.18) {
+      const ring = mkEl('circle', {cx, cy, r: '10', fill: 'none', stroke: cat.color, 'stroke-width': '1.2'});
+      ring.innerHTML = `
+        <animate attributeName="r" from="10" to="30" dur="2.8s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" from="0.7" to="0" dur="2.8s" repeatCount="indefinite"/>`;
+      hots.appendChild(ring);
+    }
+
+    // Core dot
+    const dot = mkEl('circle', {cx, cy, r: 4.5 + cat.weight * 4.5, fill: cat.color, filter: 'url(#hotGlow)'});
+    dot.style.opacity = 0.82 + cat.weight * 0.18;
+    hots.appendChild(dot);
+
+    // Small inner bright dot
+    const inner = mkEl('circle', {cx, cy, r: 2.5, fill: '#ffffff'});
+    inner.style.opacity = 0.35 + cat.weight * 0.3;
+    hots.appendChild(inner);
+  });
+
+  // ── Neural connections + sparks ──
+  (data.connections || []).forEach((conn, i) => {
+    const from = catMap[conn.from], to = catMap[conn.to];
+    if (!from || !to || conn.strength < 0.08 || from.weight < 0.04 || to.weight < 0.04) return;
+
+    const [ax, ay] = from.hotspot, [bx, by] = to.hotspot;
+    // Quadratic bezier biased slightly toward brain centre (464, 208)
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    const qx = mx + (464 - mx) * 0.32, qy = my + (208 - my) * 0.32;
+    const d = `M ${ax},${ay} Q ${qx},${qy} ${bx},${by}`;
+
+    // Connection line
+    const path = mkEl('path', {d, stroke: from.color,
+      'stroke-width': 0.7 + conn.strength * 1.6,
+      'stroke-opacity': 0.12 + conn.strength * 0.28,
+      'stroke-dasharray': '4 7'});
+    path.style.animation = `connFlow ${2.8 + i * 0.3}s linear infinite`;
+    conns.appendChild(path);
+
+    // Hidden path for animateMotion
+    const pid = `sp-${conn.from}-${conn.to}`;
+    defs.appendChild(mkEl('path', {id: pid, d}));
+
+    // Sparks
+    const numSparks = conn.strength > 0.5 ? 3 : 2;
+    const dur = (2.2 + conn.strength * 1.8).toFixed(1);
+    for (let k = 0; k < numSparks; k++) {
+      const spark = mkEl('circle', {r: '2', fill: from.color, filter: 'url(#sparkGlow)'});
+      const begin = (k * parseFloat(dur) / numSparks).toFixed(2);
+      const mot = mkEl('animateMotion', {dur: `${dur}s`, begin: `${begin}s`, repeatCount: 'indefinite'});
+      mot.appendChild(mkEl('mpath', {xlinkHref: '#' + pid}));
+      spark.appendChild(mot);
+      sparks.appendChild(spark);
+    }
+    // Reverse spark
+    if (conn.strength > 0.25) {
+      const sr = mkEl('circle', {r: '1.6', fill: to.color, filter: 'url(#sparkGlow)'});
+      const mr = mkEl('animateMotion', {dur: `${(parseFloat(dur)*1.4).toFixed(1)}s`,
+        begin: `${(parseFloat(dur)*0.45).toFixed(2)}s`, repeatCount: 'indefinite',
+        keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear'});
+      mr.appendChild(mkEl('mpath', {xlinkHref: '#' + pid}));
+      sr.appendChild(mr);
+      sparks.appendChild(sr);
+    }
+  });
+
+  // ── Label cards ──
+  const W = 158, H = 68;
+  cats.forEach(cat => {
+    if (cat.weight < 0.02 && cat.session_count === 0) return;
+    const [lx, ly] = cat.label_anchor;
+    const [hx, hy] = cat.hotspot;
+    const isRight = lx > 450, isTop = ly < 40;
+    const alpha = Math.min(1, 0.35 + cat.weight * 1.3);
+
+    const g = mkEl('g', {});
+    g.style.cssText = `opacity:${alpha};animation:labelIn 0.7s ease both`;
+
+    g.appendChild(mkEl('rect', {x: lx, y: ly, width: W, height: H, rx: 7, ry: 7,
+      fill: '#080614', stroke: cat.color, 'stroke-width': '0.9', 'stroke-opacity': '0.65'}));
+
+    const title = mkEl('text', {x: lx+10, y: ly+17, 'font-size': '10.5',
+      'font-weight': '700', fill: cat.color});
+    title.textContent = cat.name;
+    g.appendChild(title);
+
+    (cat.topics || []).slice(0, 2).forEach((topic, j) => {
+      const t = mkEl('text', {x: lx+10, y: ly+31+j*13, 'font-size': '9', fill: '#7a7a9a'});
+      t.textContent = '· ' + (topic.length > 23 ? topic.slice(0, 23) + '…' : topic);
+      g.appendChild(t);
+    });
+
+    const meta = mkEl('text', {x: lx+10, y: ly+61, 'font-size': '8.5', fill: '#404058'});
+    let m = cat.session_count > 0 ? `${cat.session_count} session${cat.session_count>1?'s':''}` : 'no sessions yet';
+    if (cat.last_active_h !== null)
+      m += ` · ${cat.last_active_h < 1 ? '<1h' : Math.round(cat.last_active_h)+'h'} ago`;
+    meta.textContent = m;
+    g.appendChild(meta);
+
+    labels.appendChild(g);
+
+    // Connector line (nearest label edge → hotspot)
+    let x1, y1;
+    if (isTop)        { x1 = lx + W/2; y1 = ly + H; }
+    else if (isRight) { x1 = lx;       y1 = ly + H/2; }
+    else              { x1 = lx + W;   y1 = ly + H/2; }
+
+    const line = mkEl('line', {x1, y1, x2: hx, y2: hy,
+      stroke: cat.color, 'stroke-width': '0.75',
+      'stroke-opacity': Math.min(0.5, 0.18 + cat.weight * 0.4),
+      'stroke-dasharray': '3,4'});
+    connectors.appendChild(line);
   });
 }
 </script>

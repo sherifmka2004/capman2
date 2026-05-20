@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from capman.api.routes import events, sessions, query, knowledge, chat, context, storage
+from capman.api.routes import events, sessions, query, knowledge, chat, context, storage, brain
 
 
 def create_app(config: dict, db=None) -> FastAPI:
@@ -28,6 +28,7 @@ def create_app(config: dict, db=None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(context.router)
     app.include_router(storage.router)
+    app.include_router(brain.router)
 
     @app.get("/health")
     async def health():
