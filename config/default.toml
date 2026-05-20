@@ -10,6 +10,12 @@ interval_seconds = 30
 on_event_types = ["url_visit", "shell_command"]
 save_dir = "~/.capman/screenshots"
 max_disk_gb = 5.0
+# Storage reduction options
+format = "png"          # "png" | "jpeg" | "webp"
+quality = 80            # 1-100, applies to jpeg/webp only
+scale = 1.0             # 0.1-1.0, downscale before saving
+retain_days = 0         # delete screenshots older than N days (0 = disabled)
+delete_after_ocr = false  # delete file after pipeline OCR extracts text
 
 [sensors.keyboard]
 aggregate_window_ms = 500

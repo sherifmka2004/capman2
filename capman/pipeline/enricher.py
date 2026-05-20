@@ -5,6 +5,7 @@ Mutates screenshot events in-place by filling ocr_text.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from capman.events import Event, EventType, Session
 from capman.pipeline.ocr import OCREngine
@@ -15,6 +16,9 @@ logger = logging.getLogger(__name__)
 class Enricher:
     def __init__(self, config: dict):
         self._ocr = OCREngine(config)
+        self._delete_after_ocr: bool = (
+            config.get("sensors", {}).get("screenshot", {}).get("delete_after_ocr", False)
+        )
 
     def enrich_session(self, session: Session) -> Session:
         """Run post-session enrichment. Returns the same session (mutated)."""
@@ -35,3 +39,10 @@ class Enricher:
             except Exception as e:
                 logger.warning("OCR enrichment failed for %s: %s", path, e)
                 event.payload["ocr_text"] = ""
+
+            if self._delete_after_ocr:
+                try:
+                    Path(path).unlink(missing_ok=True)
+                    logger.debug("Deleted screenshot after OCR: %s", path)
+                except Exception as e:
+                    logger.warning("Failed to delete screenshot %s: %s", path, e)
