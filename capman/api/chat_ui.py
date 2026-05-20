@@ -1211,33 +1211,64 @@ function renderBrain(data) {
   });
 
   // ── Label cards ──
-  const W = 158, H = 68;
+  const W = 164, H = 96;
   cats.forEach(cat => {
     if (cat.weight < 0.02 && cat.session_count === 0) return;
     const [lx, ly] = cat.label_anchor;
     const [hx, hy] = cat.hotspot;
     const isRight = lx > 450, isTop = ly < 40;
     const alpha = Math.min(1, 0.35 + cat.weight * 1.3);
+    const pct = Math.round(cat.weight * 100);
+    const barW = Math.round((W - 20) * cat.weight);
 
     const g = mkEl('g', {});
     g.style.cssText = `opacity:${alpha};animation:labelIn 0.7s ease both`;
 
-    g.appendChild(mkEl('rect', {x: lx, y: ly, width: W, height: H, rx: 7, ry: 7,
-      fill: '#080614', stroke: cat.color, 'stroke-width': '0.9', 'stroke-opacity': '0.65'}));
+    // Card background
+    g.appendChild(mkEl('rect', {x: lx, y: ly, width: W, height: H, rx: 8, ry: 8,
+      fill: '#060410', stroke: cat.color, 'stroke-width': '0.9', 'stroke-opacity': '0.7'}));
 
-    const title = mkEl('text', {x: lx+10, y: ly+17, 'font-size': '10.5',
+    // Domain name
+    const title = mkEl('text', {x: lx+10, y: ly+15, 'font-size': '10',
       'font-weight': '700', fill: cat.color});
     title.textContent = cat.name;
     g.appendChild(title);
 
-    (cat.topics || []).slice(0, 2).forEach((topic, j) => {
-      const t = mkEl('text', {x: lx+10, y: ly+31+j*13, 'font-size': '9', fill: '#7a7a9a'});
-      t.textContent = '· ' + (topic.length > 23 ? topic.slice(0, 23) + '…' : topic);
+    // Percentage — right-aligned
+    const pctEl = mkEl('text', {x: lx+W-10, y: ly+15, 'font-size': '11',
+      'font-weight': '800', fill: '#fff', 'text-anchor': 'end'});
+    pctEl.textContent = pct + '%';
+    g.appendChild(pctEl);
+
+    // Progress bar track
+    g.appendChild(mkEl('rect', {x: lx+10, y: ly+21, width: W-20, height: 3,
+      rx: 1.5, fill: '#1a1a2e'}));
+    // Progress bar fill
+    if (barW > 0) {
+      g.appendChild(mkEl('rect', {x: lx+10, y: ly+21, width: barW, height: 3,
+        rx: 1.5, fill: cat.color, 'fill-opacity': '0.85'}));
+    }
+
+    // Sub-topics (up to 3)
+    const topicList = (cat.topics || []).slice(0, 3);
+    topicList.forEach((topic, j) => {
+      // bullet dot
+      g.appendChild(mkEl('circle', {cx: lx+13, cy: ly+35+j*14-1.5, r: 2,
+        fill: cat.color, 'fill-opacity': '0.6'}));
+      const t = mkEl('text', {x: lx+20, y: ly+35+j*14, 'font-size': '8.5', fill: '#8a8aaa'});
+      t.textContent = topic.length > 20 ? topic.slice(0, 20) + '…' : topic;
       g.appendChild(t);
     });
+    // Fill empty topic rows with placeholder dashes so layout is consistent
+    for (let j = topicList.length; j < 3; j++) {
+      const t = mkEl('text', {x: lx+20, y: ly+35+j*14, 'font-size': '8.5', fill: '#2a2a3e'});
+      t.textContent = '—';
+      g.appendChild(t);
+    }
 
-    const meta = mkEl('text', {x: lx+10, y: ly+61, 'font-size': '8.5', fill: '#404058'});
-    let m = cat.session_count > 0 ? `${cat.session_count} session${cat.session_count>1?'s':''}` : 'no sessions yet';
+    // Meta row
+    const meta = mkEl('text', {x: lx+10, y: ly+H-8, 'font-size': '8', fill: '#3a3a58'});
+    let m = cat.session_count > 0 ? `${cat.session_count} session${cat.session_count>1?'s':''}` : 'no sessions';
     if (cat.last_active_h !== null)
       m += ` · ${cat.last_active_h < 1 ? '<1h' : Math.round(cat.last_active_h)+'h'} ago`;
     meta.textContent = m;
@@ -1248,8 +1279,8 @@ function renderBrain(data) {
     // Connector line (nearest label edge → hotspot)
     let x1, y1;
     if (isTop)        { x1 = lx + W/2; y1 = ly + H; }
-    else if (isRight) { x1 = lx;       y1 = ly + H/2; }
-    else              { x1 = lx + W;   y1 = ly + H/2; }
+    else if (isRight) { x1 = lx;       y1 = Math.min(ly + H/2, hy + 20); }
+    else              { x1 = lx + W;   y1 = Math.min(ly + H/2, hy + 20); }
 
     const line = mkEl('line', {x1, y1, x2: hx, y2: hy,
       stroke: cat.color, 'stroke-width': '0.75',

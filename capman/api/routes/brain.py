@@ -71,7 +71,7 @@ DOMAINS: dict[str, dict] = {
         "color": "#fb923c",
         "glow": "#c2410c",
         "hotspot": [660, 415],
-        "label_anchor": [740, 415],
+        "label_anchor": [740, 374],
         "keywords": [
             "railway", "docker", "deploy", "server", "config", "environment",
             "devops", "infrastructure", "ci", "cloud", "deployment",
@@ -214,7 +214,7 @@ async def get_brain_data(request: Request):
             "label_anchor": d["label_anchor"],
             "weight": round(weight, 3),
             "session_count": n_sessions.get(did, 0),
-            "topics": topics.get(did, [])[:3],
+            "topics": topics.get(did, [])[:5],
             "last_active_h": age_h,
         })
 
