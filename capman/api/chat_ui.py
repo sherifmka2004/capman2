@@ -671,6 +671,10 @@ function openSession(id) {
             }
           } catch(e) {}
         }
+      } else if (s.analyzed === 2) {
+        const dur = s.ended_at && s.started_at ? Math.round(s.ended_at - s.started_at) : null;
+        const durStr = dur !== null ? ` (${dur}s)` : '';
+        html += `<p style="color:#888"><em>Skipped — session too short${durStr} to meet analysis threshold</em></p>`;
       } else {
         html += `<p style="color:#888"><em>Not yet analyzed</em></p>`;
       }
