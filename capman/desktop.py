@@ -2,7 +2,7 @@
 capman2 desktop entry point — system tray icon + browser-based web UI.
 
 Launches the FastAPI daemon in a background thread and opens the dashboard
-in the user's default browser. The system tray icon provides Start/Stop/Quit.
+in the user's default browser. The system tray icon provides Open/Quit.
 """
 from __future__ import annotations
 
@@ -27,9 +27,7 @@ def _generate_icon(path: Path) -> None:
 
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    # Blue filled circle
     draw.ellipse([2, 2, 62, 62], fill=(37, 99, 235, 255))
-    # White "c" letter
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 36)
     except Exception:
@@ -66,61 +64,57 @@ def _run_server(config: dict) -> None:
     asyncio.run(_run_daemon(config))
 
 
-def _build_tray_icon(config: dict, server_thread: threading.Thread):
+def run_desktop() -> None:
     import pystray
     from PIL import Image
 
-    icon_p = _icon_path()
-    if not icon_p.exists():
-        _generate_icon(icon_p)
-    img = Image.open(icon_p)
-
-    port = config["api"]["port"]
-
-    def on_open(icon, item):
-        webbrowser.open(f"http://localhost:{port}")
-
-    def on_stop(icon, item):
-        from capman.config import get_data_dir
-        data_dir = get_data_dir(config)
-        pid_file = data_dir / "capman.pid"
-        if pid_file.exists():
-            try:
-                os.kill(int(pid_file.read_text().strip()), signal.SIGTERM)
-            except (ProcessLookupError, ValueError):
-                pass
-
-    def on_quit(icon, item):
-        on_stop(icon, item)
-        icon.stop()
-
-    menu = pystray.Menu(
-        pystray.MenuItem("Open Dashboard", on_open, default=True),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Stop Capture", on_stop),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Quit capman2", on_quit),
-    )
-    return pystray.Icon("capman2", img, "capman2", menu)
-
-
-def run_desktop() -> None:
-    from capman.config import load_config
+    from capman.config import load_config, get_data_dir
     from capman.main import setup_logging
 
     config = load_config()
     setup_logging(config["core"]["log_level"])
+
+    # Write PID file so /settings/stop and the CLI can find this process
+    data_dir = get_data_dir(config)
+    pid_file = data_dir / "capman.pid"
+    pid_file.write_text(str(os.getpid()))
 
     server_thread = threading.Thread(target=_run_server, args=(config,), daemon=True)
     server_thread.start()
 
     port = config["api"]["port"]
     logger.info("Waiting for server on port %d...", port)
-    if _wait_for_server(port):
-        webbrowser.open(f"http://localhost:{port}")
-    else:
-        logger.warning("Server did not start within timeout; opening anyway")
+    _wait_for_server(port)
+    webbrowser.open(f"http://localhost:{port}")
+
+    icon_p = _icon_path()
+    if not icon_p.exists():
+        _generate_icon(icon_p)
+    img = Image.open(icon_p)
+
+    _icon_ref: list = []  # holds the pystray.Icon so the signal handler can reach it
+
+    def _quit_from_signal(sig, frame):
+        if _icon_ref:
+            _icon_ref[0].stop()
+
+    signal.signal(signal.SIGTERM, _quit_from_signal)
+    signal.signal(signal.SIGINT, _quit_from_signal)
+
+    def on_open(icon, item):
         webbrowser.open(f"http://localhost:{port}")
 
-    icon = _build_tray_icon(config, server_thread)
+    def on_quit(icon, item):
+        pid_file.unlink(missing_ok=True)
+        icon.stop()
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Open Dashboard", on_open, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Quit capman2", on_quit),
+    )
+    icon = pystray.Icon("capman2", img, "capman2", menu)
+    _icon_ref.append(icon)
     icon.run()
+
+    pid_file.unlink(missing_ok=True)

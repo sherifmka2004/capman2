@@ -165,8 +165,10 @@ async def _run_daemon(config: dict) -> None:
         pipeline.stop()
         stop_event.set()
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    import threading as _threading
+    if _threading.current_thread() is _threading.main_thread():
+        signal.signal(signal.SIGINT, _shutdown)
+        signal.signal(signal.SIGTERM, _shutdown)
 
     # Run all sensors + pipeline concurrently
     sensor_tasks = [asyncio.create_task(s.run()) for s in sensors]
