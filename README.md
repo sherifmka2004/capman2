@@ -25,6 +25,120 @@ The installer handles `uv`, Python deps, the global `capman` command, and the da
 
 ---
 
+## Desktop App (macOS / Linux / Windows)
+
+No Python required — download the pre-built app and double-click.
+
+### Download
+
+Grab the latest release from the [**Releases page**](https://github.com/sherifmka2004/capman2/releases):
+
+| Platform | File |
+|----------|------|
+| macOS (Apple Silicon) | `capman2-macos-arm64.dmg` |
+| macOS (Intel) | `capman2-macos-x86_64.dmg` |
+| Linux (x86_64) | `capman2-linux-x86_64.AppImage` |
+| Windows (x86_64) | `capman2-windows-x86_64-setup.exe` |
+
+### macOS
+
+1. Open the `.dmg` and drag **capman2** into your Applications folder.
+2. Launch capman2 from Applications (or Spotlight).
+3. On first launch macOS may show *"capman2 cannot be opened because the developer cannot be verified"* — open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+4. Grant **Accessibility** access when prompted (required for keyboard/mouse sensors): **System Settings → Privacy & Security → Accessibility** → enable capman2.
+5. The app icon appears in your **menu bar**. Your browser opens automatically at `http://localhost:7331`.
+6. Click the menu-bar icon → **Open Dashboard** → **Settings tab** → enter your API key and save.
+
+### Linux
+
+```bash
+chmod +x capman2-linux-x86_64.AppImage
+./capman2-linux-x86_64.AppImage
+```
+
+> **Note:** FUSE is required for AppImage. Install with:
+> ```bash
+> # Debian/Ubuntu
+> sudo apt install libfuse2
+> # Fedora
+> sudo dnf install fuse
+> ```
+
+The app icon appears in your system tray. Your browser opens at `http://localhost:7331`.
+
+### Windows
+
+1. Run `capman2-windows-x86_64-setup.exe` and follow the installer.
+2. Launch **capman2** from the Start menu or desktop shortcut.
+3. The app icon appears in the **system tray** (bottom-right). Your browser opens at `http://localhost:7331`.
+
+### First-run setup (all platforms)
+
+1. Open the dashboard (browser auto-opens, or click tray icon → **Open Dashboard**).
+2. Go to the **⚙ Settings** tab.
+3. Enter your **Anthropic API Key** (or OpenRouter API Key) and click **Save Settings**.
+4. Enable or disable sensors and adjust thresholds to your preference.
+5. Capture starts automatically — sessions appear in the **Sessions** tab after 60+ seconds of activity.
+
+> **API key:** Get one at [console.anthropic.com](https://console.anthropic.com) (Claude Haiku is the primary model; costs are very low — typically <$1/day of heavy use).
+
+### Tray menu
+
+| Action | What it does |
+|--------|-------------|
+| Open Dashboard | Opens `http://localhost:7331` in your browser |
+| Stop Capture | Sends a graceful shutdown signal to the daemon |
+| Quit capman2 | Stops capture and exits the tray app |
+
+---
+
+## Build from Source (desktop app)
+
+Prerequisites: Python 3.11–3.12, [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/sherifmka2004/capman2.git
+cd capman2
+uv sync
+
+# Run in desktop mode (tray icon + browser UI, no PyInstaller needed)
+uv run capman-desktop
+
+# Or build the platform executable
+uv pip install pyinstaller
+uv run pyinstaller capman.spec --noconfirm
+# macOS: open dist/capman2.app
+# Linux: ./dist/capman2/capman2
+# Windows: dist\capman2\capman2.exe
+```
+
+The PyInstaller build creates a `dist/capman2/` directory (~150–200 MB). On macOS it also produces `dist/capman2.app`. Package into a distributable:
+
+```bash
+# macOS — requires: brew install create-dmg
+create-dmg --volname "capman2" --app-drop-link 400 120 \
+  dist/capman2-macos.dmg dist/capman2.app
+
+# Linux — requires appimagetool
+# (See .github/workflows/build.yml for the full AppImage build steps)
+
+# Windows — requires Inno Setup
+iscc packaging\windows\capman2.iss
+```
+
+### Automated releases (GitHub Actions)
+
+Pushing a version tag triggers the full cross-platform build:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Four artifacts are built in parallel (macOS arm64, macOS x86_64, Linux AppImage, Windows installer) and attached to the GitHub Release automatically. See [`.github/workflows/build.yml`](.github/workflows/build.yml).
+
+---
+
 ## Why This Exists
 
 When a senior engineer debugs a production incident, a data scientist investigates an anomaly, or a researcher traces a literature gap, the valuable thing isn't the answer they reach. It's the **workflow that got them there**: what they searched first, how they pivoted when that failed, what signals told them they were on the right track.

@@ -39,7 +39,10 @@ def load_config(config_dir: Path | None = None, extra_overrides: list[str] | Non
     4. Any extra named overrides from config/ (e.g. "headless")
     """
     if config_dir is None:
-        config_dir = Path(__file__).parent.parent / "config"
+        if getattr(sys, "frozen", False):
+            config_dir = Path(sys._MEIPASS) / "config"  # type: ignore[attr-defined]
+        else:
+            config_dir = Path(__file__).parent.parent / "config"
 
     default_path = config_dir / "default.toml"
     with open(default_path, "rb") as f:

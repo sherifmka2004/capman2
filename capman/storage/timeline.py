@@ -33,7 +33,12 @@ class TimelineDB:
         if self._db is None:
             await self.connect()
 
-        schema_sql = (Path(__file__).parent / "schema.sql").read_text()
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            _schema_path = Path(_sys._MEIPASS) / "capman" / "storage" / "schema.sql"  # type: ignore[attr-defined]
+        else:
+            _schema_path = Path(__file__).parent / "schema.sql"
+        schema_sql = _schema_path.read_text()
         await self._db.executescript(schema_sql)
 
         # Check if already versioned
@@ -156,25 +161,40 @@ class TimelineDB:
         await self._db.commit()
 
     async def save_triple(self, triple: Triple) -> None:
-        await self._db.execute(
-            """INSERT INTO knowledge_triples
-               (id, subject, predicate, object, confidence, observed_count,
-                first_seen, last_observed, source_session)
-               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 observed_count = observed_count + 1,
-                 last_observed = excluded.last_observed""",
-            (
-                triple.id,
-                triple.subject,
-                triple.predicate,
-                triple.object,
-                triple.confidence,
-                triple.observed_at,
-                triple.observed_at,
-                triple.source_session,
-            ),
-        )
+        await self.upsert_triple(triple)
+
+    async def upsert_triple(self, triple: Triple) -> None:
+        """Insert or increment observed_count when the same (subject, predicate, object) recurs."""
+        async with self._db.execute(
+            "SELECT id, observed_count FROM knowledge_triples "
+            "WHERE subject = ? AND predicate = ? AND object = ?",
+            (triple.subject, triple.predicate, triple.object),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row:
+            await self._db.execute(
+                "UPDATE knowledge_triples SET observed_count = observed_count + 1, "
+                "last_observed = ?, confidence = MAX(confidence, ?) WHERE id = ?",
+                (triple.observed_at, triple.confidence, row["id"]),
+            )
+        else:
+            await self._db.execute(
+                """INSERT INTO knowledge_triples
+                   (id, subject, predicate, object, confidence, observed_count,
+                    first_seen, last_observed, source_session)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+                (
+                    triple.id,
+                    triple.subject,
+                    triple.predicate,
+                    triple.object,
+                    triple.confidence,
+                    triple.observed_at,
+                    triple.observed_at,
+                    triple.source_session,
+                ),
+            )
         await self._db.commit()
 
     async def save_playbook(self, pb: TroubleshootingPlaybook) -> None:

@@ -27,6 +27,26 @@ console = Console()
 logger = logging.getLogger("capman")
 
 
+def _inject_secrets(config: dict) -> None:
+    """Load API keys from ~/.capman/config.toml [secrets] into environment if not already set."""
+    import tomllib
+    user_config_path = Path("~/.capman/config.toml").expanduser()
+    if not user_config_path.exists():
+        return
+    try:
+        with open(user_config_path, "rb") as f:
+            user_cfg = tomllib.load(f)
+        secrets = user_cfg.get("secrets", {})
+        for env_key, cfg_key in [
+            ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+            ("OPENROUTER_API_KEY", "openrouter_api_key"),
+        ]:
+            if not os.environ.get(env_key) and secrets.get(cfg_key):
+                os.environ[env_key] = secrets[cfg_key]
+    except Exception:
+        pass
+
+
 def setup_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
@@ -62,6 +82,7 @@ def start(config_dir, batch_delay, headless):
     if batch_delay is not None:
         config.setdefault("pipeline", {}).setdefault("analysis", {})["batch_delay_s"] = batch_delay
 
+    _inject_secrets(config)
     setup_logging(config["core"]["log_level"])
     data_dir = get_data_dir(config)
 

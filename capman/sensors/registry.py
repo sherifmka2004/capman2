@@ -22,15 +22,30 @@ class SensorRegistry:
 
     def discover(self) -> None:
         """Import all modules in capman.sensors, collect BaseSensor subclasses."""
-        import capman.sensors as sensors_pkg
+        if getattr(sys, "frozen", False):
+            # pkgutil.iter_modules doesn't work in PyInstaller bundles; enumerate explicitly
+            _frozen_sensor_names = [
+                "window", "screenshot", "keyboard", "mouse", "clipboard",
+                "shell", "filesystem", "browser_relay", "documents", "idle",
+                "activity_context",
+            ]
+            for name in _frozen_sensor_names:
+                try:
+                    importlib.import_module(f"capman.sensors.{name}")
+                except Exception as e:
+                    logger.warning("Failed to import sensor module %s: %s", name, e)
+        else:
+            import capman.sensors as sensors_pkg
+            for _, name, _ in pkgutil.iter_modules(sensors_pkg.__path__):
+                if name in ("base", "registry"):
+                    continue
+                try:
+                    importlib.import_module(f"capman.sensors.{name}")
+                except Exception as e:
+                    logger.warning("Failed to import sensor module %s: %s", name, e)
 
-        for _, name, _ in pkgutil.iter_modules(sensors_pkg.__path__):
-            if name in ("base", "registry"):
-                continue
-            try:
-                module = importlib.import_module(f"capman.sensors.{name}")
-            except Exception as e:
-                logger.warning("Failed to import sensor module %s: %s", name, e)
+        for module in list(sys.modules.values()):
+            if not (module and getattr(module, "__name__", "").startswith("capman.sensors.")):
                 continue
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)

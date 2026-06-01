@@ -333,6 +333,7 @@ CHAT_HTML = """<!DOCTYPE html>
   <div class="tab" data-view="storage">💾 Storage <span class="tab-count" id="count-storage">—</span></div>
   <div class="tab" data-view="context">⚡ Context Suggest</div>
   <div class="tab" data-view="brain">🧠 Brain Map</div>
+  <div class="tab" data-view="settings">⚙ Settings</div>
 </div>
 
 <!-- Chat view -->
@@ -375,6 +376,19 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
 
 <!-- Sessions view -->
 <div class="view hidden" id="view-sessions">
+  <div style="padding:12px 16px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid #1a1a1a">
+    <input id="sessions-search" type="text" placeholder="Search by problem, app, domain…"
+      oninput="renderSessions()"
+      style="background:#111;border:1px solid #333;color:#ccc;border-radius:6px;padding:5px 10px;font-size:13px;min-width:220px;flex:1">
+    <button class="sessions-filter-btn" data-filter="all" onclick="setSessionsFilter('all')"
+      style="background:#2563eb;border:1px solid #3b82f6;color:#fff;border-radius:12px;padding:3px 10px;cursor:pointer;font-size:12px">All</button>
+    <button class="sessions-filter-btn" data-filter="analyzed" onclick="setSessionsFilter('analyzed')"
+      style="background:#1e1e1e;border:1px solid #333;color:#999;border-radius:12px;padding:3px 10px;cursor:pointer;font-size:12px">Analyzed</button>
+    <button class="sessions-filter-btn" data-filter="pending" onclick="setSessionsFilter('pending')"
+      style="background:#1e1e1e;border:1px solid #333;color:#999;border-radius:12px;padding:3px 10px;cursor:pointer;font-size:12px">Pending</button>
+    <button class="sessions-filter-btn" data-filter="skipped" onclick="setSessionsFilter('skipped')"
+      style="background:#1e1e1e;border:1px solid #333;color:#999;border-radius:12px;padding:3px 10px;cursor:pointer;font-size:12px">Skipped</button>
+  </div>
   <div class="card-list" id="sessions-list">
     <div class="empty">Loading sessions...</div>
   </div>
@@ -539,6 +553,75 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
   </div>
 </div>
 
+<!-- Settings view -->
+<div class="view hidden" id="view-settings">
+  <div style="padding:24px;max-width:680px;margin:0 auto;overflow-y:auto">
+
+    <!-- Capture status -->
+    <div style="background:#111;border:1px solid #222;border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
+      <span id="settings-status-dot" style="width:10px;height:10px;border-radius:50%;background:#666;flex-shrink:0"></span>
+      <span id="settings-status-text" style="font-size:13px;color:#aaa;flex:1">Checking daemon status...</span>
+      <button id="settings-stop-btn" onclick="settingsStop()" style="background:#1e1e1e;border:1px solid #444;color:#f87171;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">Stop Capture</button>
+    </div>
+
+    <!-- API Keys -->
+    <div style="background:#111;border:1px solid #222;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:600;color:#666;letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px">API Keys</div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Anthropic API Key <span id="anthropic-key-status" style="color:#22c55e"></span></label>
+        <div style="display:flex;gap:8px">
+          <input id="anthropic-api-key" type="password" placeholder="sk-ant-..." style="flex:1;background:#0a0a0a;border:1px solid #333;color:#ccc;border-radius:6px;padding:6px 10px;font-size:13px;font-family:monospace">
+          <button onclick="toggleVisible('anthropic-api-key')" style="background:#1a1a1a;border:1px solid #333;color:#777;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">Show</button>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">OpenRouter API Key (optional) <span id="openrouter-key-status" style="color:#22c55e"></span></label>
+        <div style="display:flex;gap:8px">
+          <input id="openrouter-api-key" type="password" placeholder="sk-or-..." style="flex:1;background:#0a0a0a;border:1px solid #333;color:#ccc;border-radius:6px;padding:6px 10px;font-size:13px;font-family:monospace">
+          <button onclick="toggleVisible('openrouter-api-key')" style="background:#1a1a1a;border:1px solid #333;color:#777;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">Show</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sensors -->
+    <div style="background:#111;border:1px solid #222;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:600;color:#666;letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px">Active Sensors</div>
+      <div id="sensor-toggles" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
+    </div>
+
+    <!-- Thresholds -->
+    <div style="background:#111;border:1px solid #222;border-radius:10px;padding:16px 20px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:600;color:#666;letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px">Capture Thresholds</div>
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:#888;display:flex;justify-content:space-between;margin-bottom:6px">
+          Screenshot interval
+          <span id="screenshot-interval-val" style="color:#7dd3fc"></span>
+        </label>
+        <input id="screenshot-interval" type="range" min="5" max="300" step="5"
+          oninput="document.getElementById('screenshot-interval-val').textContent=this.value+'s'"
+          style="width:100%;accent-color:#2563eb">
+      </div>
+      <div>
+        <label style="font-size:12px;color:#888;display:flex;justify-content:space-between;margin-bottom:6px">
+          Idle detection threshold
+          <span id="idle-threshold-val" style="color:#7dd3fc"></span>
+        </label>
+        <input id="idle-threshold" type="range" min="30" max="600" step="10"
+          oninput="document.getElementById('idle-threshold-val').textContent=this.value+'s'"
+          style="width:100%;accent-color:#2563eb">
+      </div>
+    </div>
+
+    <!-- Model status -->
+    <div id="model-notice" style="display:none;background:#1a110a;border:1px solid #7c4a0044;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#f59e0b">
+      ⬇ Embedding model (~22 MB) will download on first use — ChromaDB fetches it automatically.
+    </div>
+
+    <button onclick="saveSettings()" style="width:100%;background:#2563eb;border:none;color:#fff;border-radius:8px;padding:10px;font-size:14px;font-weight:600;cursor:pointer">Save Settings</button>
+    <div id="settings-save-msg" style="text-align:center;font-size:12px;color:#22c55e;margin-top:8px;min-height:16px"></div>
+  </div>
+</div>
+
 <!-- Detail modal -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
@@ -559,6 +642,7 @@ const loaders = {
   sessions:  loadSessions,
   storage:   loadStorage,
   brain:     loadBrain,
+  settings:  loadSettings,
 };
 const loaded = {};
 tabs.forEach(tab => {
@@ -685,63 +769,139 @@ function openPlaybook(id) {
 // ====================================================================
 // Knowledge Gaps tab
 // ====================================================================
+let _allGaps = [];
+
 function loadGaps() {
   const list = document.getElementById('gaps-list');
-  fetch('/knowledge/gaps?top=50')
+  fetch('/knowledge/gaps?top=100')
     .then(r => r.json())
     .then(data => {
-      const gaps = data.gaps || [];
+      _allGaps = data.gaps || [];
       document.getElementById('count-gaps').textContent = data.total || 0;
-      if (!gaps.length) {
-        list.innerHTML = '<div class="empty">No knowledge gaps tracked yet. Gaps are detected when you repeatedly look up the same concept across sessions.</div>';
-        return;
-      }
-      list.innerHTML = gaps.map(g => `
-        <div class="card">
-          <div class="card-title">${escapeHtml(g.concept)}</div>
-          <div class="card-meta">
-            <span class="domain">${escapeHtml(g.domain || 'unspecified')}</span>
-            <span>Looked up ${g.lookup_count}× in ${g.session_count} sessions</span>
-          </div>
-          <div class="card-body">
-            <strong>Examples:</strong>
-            <ul>${(g.examples || []).slice(0,3).map(e => '<li>' + escapeHtml(e) + '</li>').join('')}</ul>
-          </div>
-        </div>
-      `).join('');
+      renderGaps('all');
     });
+}
+
+function renderGaps(domainFilter) {
+  const list = document.getElementById('gaps-list');
+  if (!_allGaps.length) {
+    list.innerHTML = '<div class="empty">No knowledge gaps tracked yet. Gaps are detected when you repeatedly look up the same concept across sessions.</div>';
+    return;
+  }
+  const domains = ['all', ...new Set(_allGaps.map(g => g.domain || 'unspecified').filter(Boolean))];
+  const filtered = domainFilter === 'all' ? _allGaps : _allGaps.filter(g => (g.domain || 'unspecified') === domainFilter);
+
+  let html = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">`;
+  domains.forEach(d => {
+    const active = d === domainFilter;
+    html += `<button onclick="renderGaps('${escapeHtml(d)}')" style="background:${active ? '#2563eb' : '#1e1e1e'};border:1px solid ${active ? '#3b82f6' : '#333'};color:${active ? '#fff' : '#999'};border-radius:12px;padding:3px 10px;cursor:pointer;font-size:12px">${escapeHtml(d)}</button>`;
+  });
+  html += `</div>`;
+
+  html += filtered.map(g => `
+    <div class="card" onclick="openGap(${JSON.stringify(JSON.stringify(g))})" style="cursor:pointer">
+      <div class="card-title">${escapeHtml(g.concept)}</div>
+      <div class="card-meta">
+        <span class="domain">${escapeHtml(g.domain || 'unspecified')}</span>
+        <span>Looked up ${g.lookup_count}× in ${g.session_count} session${g.session_count !== 1 ? 's' : ''}</span>
+        ${g.last_seen ? '<span style="color:#666">Last: ' + new Date(g.last_seen * 1000).toLocaleDateString() + '</span>' : ''}
+      </div>
+      ${g.examples && g.examples.length ? `<div class="card-body" style="color:#888;font-size:12px">${escapeHtml(g.examples[0].slice(0, 120))}</div>` : ''}
+    </div>
+  `).join('');
+
+  list.innerHTML = html;
+}
+
+function openGap(gJson) {
+  const g = JSON.parse(gJson);
+  let html = `<h2>${escapeHtml(g.concept)}</h2>`;
+  html += `<div class="card-meta" style="margin-bottom:12px">
+    <span class="domain">${escapeHtml(g.domain || 'unspecified')}</span>
+    <span>Looked up <b>${g.lookup_count}</b>× across <b>${g.session_count}</b> sessions</span>
+    ${g.first_seen ? '<span style="color:#666">First seen: ' + new Date(g.first_seen * 1000).toLocaleDateString() + '</span>' : ''}
+    ${g.last_seen ? '<span style="color:#666">Last seen: ' + new Date(g.last_seen * 1000).toLocaleDateString() + '</span>' : ''}
+  </div>`;
+  if (g.examples && g.examples.length) {
+    html += `<h3>Query Examples</h3><ul>${g.examples.map(e => '<li>' + escapeHtml(e) + '</li>').join('')}</ul>`;
+  }
+  html += `<div style="margin-top:20px">
+    <button onclick="markGapLearned('${escapeHtml(g.concept)}')" style="background:#16a34a;border:none;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px">✓ Mark as Learned</button>
+  </div>`;
+  openModal(html);
+}
+
+async function markGapLearned(concept) {
+  const r = await fetch('/knowledge/gaps/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ concept })
+  });
+  if (r.ok) {
+    modal.classList.remove('show');
+    loadGaps();
+  }
 }
 
 // ====================================================================
 // Sessions tab
 // ====================================================================
+let _allSessions = [];
+let _sessionsFilter = 'all';
+
 function loadSessions() {
   const list = document.getElementById('sessions-list');
-  fetch('/sessions?limit=50')
+  fetch('/sessions?limit=200')
     .then(r => r.json())
     .then(data => {
-      const sessions = data.sessions || [];
-      document.getElementById('count-sessions').textContent = sessions.length;
-      if (!sessions.length) {
-        list.innerHTML = '<div class="empty">No sessions yet — use your computer for a few minutes and they will be detected automatically.</div>';
-        return;
-      }
-      list.innerHTML = sessions.map(s => {
-        const start = new Date(s.started_at * 1000).toLocaleString();
-        const end = s.ended_at ? new Date(s.ended_at * 1000).toLocaleString() : 'ongoing';
-        const dur = s.ended_at ? Math.round((s.ended_at - s.started_at) / 60) + 'min' : '...';
-        return `
-          <div class="card" onclick="openSession('${s.id}')">
-            <div class="card-title">${escapeHtml(s.dominant_app || '(unknown app)')}  <span style="color:#666;font-weight:normal">${dur}</span></div>
-            <div class="card-meta">
-              <span>${start}</span>
-              <span>${s.event_count} events</span>
-              <span class="${s.analyzed === 1 ? 'score' : ''}">${s.analyzed === 1 ? '✓ analyzed' : (s.analyzed === 2 ? 'skipped' : 'pending')}</span>
-            </div>
-          </div>
-        `;
-      }).join('');
+      _allSessions = data.sessions || [];
+      document.getElementById('count-sessions').textContent = _allSessions.length;
+      renderSessions();
     });
+}
+
+function renderSessions() {
+  const list = document.getElementById('sessions-list');
+  const query = (document.getElementById('sessions-search') ? document.getElementById('sessions-search').value : '').toLowerCase();
+  let sessions = _allSessions;
+  if (_sessionsFilter === 'analyzed') sessions = sessions.filter(s => s.analyzed === 1);
+  else if (_sessionsFilter === 'pending') sessions = sessions.filter(s => s.analyzed === 0);
+  else if (_sessionsFilter === 'skipped') sessions = sessions.filter(s => s.analyzed === 2);
+  if (query) sessions = sessions.filter(s =>
+    (s.problem_statement || '').toLowerCase().includes(query) ||
+    (s.dominant_app || '').toLowerCase().includes(query) ||
+    (s.primary_domain || '').toLowerCase().includes(query)
+  );
+  if (!sessions.length) {
+    list.innerHTML = '<div class="empty">No sessions match your filter.</div>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => {
+    const start = new Date(s.started_at * 1000).toLocaleString();
+    const dur = s.ended_at ? Math.round((s.ended_at - s.started_at) / 60) + 'min' : '...';
+    const statusLabel = s.analyzed === 1 ? '✓ analyzed' : (s.analyzed === 2 ? 'skipped' : 'pending');
+    return `
+      <div class="card" onclick="openSession('${s.id}')">
+        <div class="card-title">${escapeHtml(s.dominant_app || '(unknown app)')} <span style="color:#666;font-weight:normal">${dur}</span></div>
+        <div class="card-meta">
+          <span>${start}</span>
+          <span>${s.event_count} events</span>
+          <span class="${s.analyzed === 1 ? 'score' : ''}">${statusLabel}</span>
+        </div>
+        ${s.problem_statement ? '<div class="card-body" style="color:#888;font-size:12px">' + escapeHtml(s.problem_statement.slice(0, 120)) + '</div>' : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function setSessionsFilter(f) {
+  _sessionsFilter = f;
+  document.querySelectorAll('.sessions-filter-btn').forEach(b => {
+    b.style.background = b.dataset.filter === f ? '#2563eb' : '#1e1e1e';
+    b.style.color = b.dataset.filter === f ? '#fff' : '#999';
+    b.style.borderColor = b.dataset.filter === f ? '#3b82f6' : '#333';
+  });
+  renderSessions();
 }
 
 // ====================================================================
@@ -840,6 +1000,22 @@ function openSession(id) {
                 </div>`;
               });
             }
+            if (cot.time_allocation && Object.keys(cot.time_allocation).length) {
+              const phases = Object.entries(cot.time_allocation).filter(([,v]) => v > 0);
+              const total = phases.reduce((s,[,v]) => s + v, 0);
+              const phaseIcons = {search:'🔍',read:'📖',implement:'⌨️',debug:'🐛',navigate:'🧭',idle:'💤'};
+              html += `<h3>Time Allocation</h3><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">`;
+              phases.forEach(([phase, secs]) => {
+                const icon = phaseIcons[phase] || '⏱';
+                const pct = total > 0 ? Math.round(100 * secs / total) : 0;
+                const mins = secs >= 60 ? Math.floor(secs/60) + 'm' : secs + 's';
+                html += `<span style="background:#161616;border:1px solid #2a2a2a;border-radius:6px;padding:4px 10px;font-size:12px">${icon} <b style="color:#fff">${escapeHtml(phase)}</b> ${mins} <span style="color:#666">(${pct}%)</span></span>`;
+              });
+              html += `</div>`;
+            }
+            if (cot.dead_ends && cot.dead_ends.length) {
+              html += `<h3>Dead Ends</h3><ul style="color:#888">${cot.dead_ends.map(d => '<li>' + escapeHtml(d) + '</li>').join('')}</ul>`;
+            }
             if (cot.knowledge_gaps_revealed && cot.knowledge_gaps_revealed.length) {
               html += `<h3>Knowledge Gaps Revealed</h3><ul>${cot.knowledge_gaps_revealed.map(g => '<li>' + escapeHtml(g) + '</li>').join('')}</ul>`;
             }
@@ -912,11 +1088,11 @@ function runContextSuggest() {
     if (d.playbooks && d.playbooks.length) {
       html += `<div class="ctx-section"><h3>Matching Playbooks</h3>`;
       d.playbooks.forEach(p => {
-        html += `<div class="ctx-card">
-          <div class="ctx-title">${escapeHtml(p.title)}</div>
-          <div class="ctx-detail">Score ${(p.score || 0).toFixed(2)} · ${escapeHtml(p.domain || '')}</div>
+        html += `<div class="ctx-card" onclick="openPlaybook('${escapeHtml(p.id)}')" style="cursor:pointer">
+          <div class="ctx-title" style="color:#7dd3fc">${escapeHtml(p.title)}</div>
+          <div class="ctx-detail">Score ${(p.score || 0).toFixed(2)} · ${escapeHtml(p.domain || '')} · <em>click for full detail</em></div>
           ${p.root_cause ? '<div class="ctx-detail"><strong>Root cause:</strong> ' + escapeHtml(p.root_cause) + '</div>' : ''}
-          ${p.fix && p.fix.length ? '<div class="ctx-detail"><strong>Fix:</strong> ' + p.fix.map(f => escapeHtml(f)).join(' → ') + '</div>' : ''}
+          ${p.fix && p.fix.length ? '<div class="ctx-detail"><strong>Fix:</strong> ' + p.fix.slice(0,2).map(f => escapeHtml(f)).join(' → ') + '</div>' : ''}
         </div>`;
       });
       html += `</div>`;
@@ -1316,6 +1492,95 @@ function renderBrain(data) {
       'stroke-dasharray': '3,4'});
     connectors.appendChild(line);
   });
+}
+
+// ====================================================================
+// Settings tab
+// ====================================================================
+let _settingsData = {};
+
+function loadSettings() {
+  fetch('/settings').then(r => r.json()).then(d => {
+    _settingsData = d;
+
+    // Daemon status
+    const dot = document.getElementById('settings-status-dot');
+    const txt = document.getElementById('settings-status-text');
+    if (d.daemon_running) {
+      dot.style.background = '#22c55e';
+      txt.textContent = 'Capture daemon is running';
+    } else {
+      dot.style.background = '#ef4444';
+      txt.textContent = 'Capture daemon is stopped';
+    }
+
+    // API key status
+    document.getElementById('anthropic-key-status').textContent = d.anthropic_api_key_set ? '✓ set' : '';
+    document.getElementById('openrouter-key-status').textContent = d.openrouter_api_key_set ? '✓ set' : '';
+
+    // Sensor toggles
+    const container = document.getElementById('sensor-toggles');
+    container.innerHTML = '';
+    (d.all_sensors || []).forEach(sid => {
+      const enabled = (d.sensors_enabled || []).includes(sid);
+      const label = sid.replace(/_/g, ' ');
+      container.innerHTML += `
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:6px 8px;border-radius:6px;background:#0d0d0d;border:1px solid #1e1e1e">
+          <input type="checkbox" data-sensor="${sid}" ${enabled ? 'checked' : ''}
+            style="accent-color:#2563eb;width:15px;height:15px;cursor:pointer">
+          <span style="font-size:13px;color:#ccc;text-transform:capitalize">${label}</span>
+        </label>`;
+    });
+
+    // Sliders
+    const si = document.getElementById('screenshot-interval');
+    si.value = d.screenshot_interval_s || 30;
+    document.getElementById('screenshot-interval-val').textContent = si.value + 's';
+
+    const it = document.getElementById('idle-threshold');
+    it.value = d.idle_threshold_s || 180;
+    document.getElementById('idle-threshold-val').textContent = it.value + 's';
+
+    // Model notice
+    if (!d.model_ready) {
+      document.getElementById('model-notice').style.display = 'block';
+    }
+  }).catch(() => {});
+}
+
+function saveSettings() {
+  const sensors = Array.from(document.querySelectorAll('[data-sensor]:checked')).map(el => el.dataset.sensor);
+  const anthropicKey = document.getElementById('anthropic-api-key').value.trim();
+  const openrouterKey = document.getElementById('openrouter-api-key').value.trim();
+  const payload = {
+    sensors_enabled: sensors,
+    screenshot_interval_s: parseInt(document.getElementById('screenshot-interval').value),
+    idle_threshold_s: parseInt(document.getElementById('idle-threshold').value),
+  };
+  if (anthropicKey) payload.anthropic_api_key = anthropicKey;
+  if (openrouterKey) payload.openrouter_api_key = openrouterKey;
+
+  fetch('/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
+    .then(r => r.json())
+    .then(() => {
+      const msg = document.getElementById('settings-save-msg');
+      msg.textContent = 'Saved. Restart capture for sensor changes to take effect.';
+      setTimeout(() => { msg.textContent = ''; }, 4000);
+      document.getElementById('anthropic-api-key').value = '';
+      document.getElementById('openrouter-api-key').value = '';
+      loadSettings();
+    }).catch(() => {});
+}
+
+function settingsStop() {
+  fetch('/settings/stop', { method: 'POST' }).then(() => {
+    setTimeout(loadSettings, 500);
+  }).catch(() => {});
+}
+
+function toggleVisible(inputId) {
+  const el = document.getElementById(inputId);
+  el.type = el.type === 'password' ? 'text' : 'password';
 }
 </script>
 </body>

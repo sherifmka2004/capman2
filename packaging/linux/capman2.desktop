@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=capman2
+Comment=Cognitive Workflow Capture Engine
+Exec=capman2
+Icon=capman2
+Terminal=false
+Type=Application
+Categories=Utility;Science;
+StartupNotify=true
