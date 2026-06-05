@@ -139,13 +139,16 @@ Four artifacts are built in parallel (macOS arm64, macOS x86_64, Linux AppImage,
 
 ---
 
-## Why This Exists
+## Why This Exists: The Cognitive Imperative
 
-When a senior engineer debugs a production incident, a data scientist investigates an anomaly, or a researcher traces a literature gap, the valuable thing isn't the answer they reach. It's the **workflow that got them there**: what they searched first, how they pivoted when that failed, what signals told them they were on the right track.
+In a world where LLMs are ubiquitous, the value shift has moved from *information* to *methodology*.
 
-That workflow is currently invisible. It lives nowhere except inside the expert's head, and it dies with the session.
+When a senior engineer debugs a production incident, a data scientist investigates an anomaly, or a researcher traces a literature gap, the most valuable asset isn't the final answer they reach. It is the **cognitive workflow that got them there**: what they searched first, how they pivoted when that failed, what signals told them they were on the right track, and how they structured their thought process.
 
-capman2 makes it persistent, searchable, and replayable. An LLM that has seen your past workflows can approach future similar problems the same way you would — because it has seen you do it, step by step.
+Currently, that methodology is invisible. It lives only in the expert's head, and it dies when the session ends.
+
+**capman2** makes this cognitive process persistent, searchable, and replayable. By capturing not just outputs but the *sequence of decisions*, it builds a knowledge engine that allows future-you (or future-AI) to approach new problems not just with *data*, but with the *proven methodology* of an expert. It transforms your daily work from a series of disconnected tasks into a structured, evolving playbook of your own expertise.
+
 
 ---
 
@@ -206,7 +209,7 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
 ---
 
 ## Architecture
-
+ 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Capture Sensors                           │
@@ -223,8 +226,6 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
               ┌──────────────────────────┐
               │     SessionDetector      │  sliding-window state machine
               │   IDLE → ACTIVE → COOL   │  groups events into episodes
-              │   idle_start → hard      │  AFK force-closes the current
-              │   session break          │  session (no glued lunch breaks)
               └─────────────┬────────────┘
                          │ completed Session
                          ▼
@@ -235,19 +236,27 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
                          ▼
               ┌─────────────────────────────────────────┐
               │         LLM Analyzer (3 passes)         │
-              │                                         │
-              │  Pass 1: Summarize (haiku, every sess.) │
-              │  Pass 2: Chain-of-Thought (sonnet, top) │
-              │  Pass 3: Triple extract (haiku, after 2)│
               └──────────┬──────────────────────────────┘
                          │
+               ┌─────────┴──────────────────────────────┐
+               │        Pluggable Storage Layer         │
+               │  [Local / Remote Adapters]             │
+               │  [Encryption-at-rest Decorator]        │
+               └─────────┬──────────────────────────────┘
+                         │
               ┌──────────┴──────────────────────────────┐
-              │                Storage                   │
+              │                Stores                   │
               │  SQLite    — raw event timeline          │
               │  ChromaDB  — semantic vector index       │
               │  Markdown  — Obsidian knowledge graph    │
               └─────────────────────────────────────────┘
 ```
+
+### Pluggable Storage & Encryption
+capman2 now supports a modular storage architecture. You can configure it to use local storage (SQLite/ChromaDB) or plug in remote/dedicated backends. 
+
+All storage operations can be optionally wrapped in an encryption-at-rest layer using AES-256 (`cryptography` library), ensuring that your sensitive cognitive workflows remain private even if stored in remote cloud services.
+
 
 ### Session Detection
 
@@ -460,39 +469,34 @@ For full web capture (search queries, tab sequences, page text, visit durations)
 ---
 
 ## Configuration
-
+ 
 Config is layered (each overrides the previous):
 1. `config/default.toml` — base defaults
 2. `config/{macos,linux,windows}.toml` — OS-specific overrides
 3. `~/.capman/config.toml` — user overrides (optional)
 4. Named overlays: `headless.toml` (loaded automatically when no display)
-
+ 
 **Key settings** (`config/default.toml`):
-
+ 
 ```toml
+[storage]
+# 'local' or 'remote' (pluggable adapters)
+mode = "local"
+# Optional AES-256 encryption-at-rest
+encryption_enabled = false
+encryption_key_env = "CAPMAN_MASTER_KEY"
+
+[storage.local]
+vector_path = "~/.capman/chroma"
+timeline_path = "~/.capman/timeline.db"
+
 [sensors]
 enabled = ["window", "screenshot", "keyboard", "clipboard",
            "shell", "filesystem", "browser_relay", "documents"]
-
-[pipeline.session]
-idle_threshold_s = 90        # idle before entering COOLING state
-cool_period_s = 120          # grace period before flushing session
-hard_break_s = 1200          # force new session after 20 min regardless
-
-[pipeline.analysis]
-cot_reusability_threshold = 0.5   # min score to trigger Pass 2
-batch_delay_s = 300               # wait after session close before analyzing
-
-[storage]
-sqlite_path = "~/.capman/timeline.db"
-knowledge_dir = "~/.capman/knowledge"
-
-[sensors.filesystem]
-watch_paths = ["~/Desktop", "~/Downloads", "~/Documents", "~/code"]
-extensions = [".py", ".js", ".ts", ".go", ".rs", ".md", ".json"]
 ```
 
----
+The `[storage]` section now supports flexible configuration of local paths or remote backend credentials. If `encryption_enabled` is set to true, all data is encrypted locally before being passed to the storage adapter.
+
 
 ## Data Storage
 
