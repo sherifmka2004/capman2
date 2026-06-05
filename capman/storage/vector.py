@@ -16,7 +16,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CHUNK_CHARS = 800
+CHUNK_CHARS = 1600
 CHUNK_OVERLAP = 100
 
 
@@ -45,7 +45,9 @@ def _hash(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
-class VectorStore:
+from capman.storage.interfaces import VectorStoreAdapter
+
+class VectorStore(VectorStoreAdapter):
     COLLECTION = "capman_knowledge"
 
     def __init__(self, chroma_path: str, chunk_chars: int = CHUNK_CHARS, chunk_overlap: int = CHUNK_OVERLAP):

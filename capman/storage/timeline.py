@@ -17,7 +17,9 @@ from capman.events import (
 )
 
 
-class TimelineDB:
+from capman.storage.interfaces import TimelineDBAdapter
+
+class TimelineDB(TimelineDBAdapter):
     def __init__(self, db_path: str):
         self._path = str(Path(db_path).expanduser())
         self._db: aiosqlite.Connection | None = None
