@@ -23,7 +23,7 @@ from capman.events import (
 )
 from capman.pipeline.prompts import (
     PASS1_SUMMARIZE, PASS2_CHAIN_OF_THOUGHT, PASS3_TRIPLE_EXTRACT,
-    PASS4_TROUBLESHOOTING_PLAYBOOK, build_event_narrative,
+    PASS4_TROUBLESHOOTING_PLAYBOOK, PASS4_WORKFLOW_PLAYBOOK, build_event_narrative,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,23 +109,24 @@ class SessionAnalyzer:
         # --- Pass 3: Triple extraction (after Pass 2) ---
         if analysis.chain_of_thought:
             try:
-                triples_data = await self._pass3(analysis)
+                narrative = build_event_narrative(session)
+                triples_data = await self._pass3(analysis, narrative)
                 analysis.triples = self._parse_triples(session.id, triples_data)
                 logger.info("Pass 3 done: %d triples extracted", len(analysis.triples))
             except Exception as e:
                 logger.error("Pass 3 failed for session %s: %s", session.id, e)
 
-        # --- Pass 4: Troubleshooting playbook (debugging sessions only) ---
-        if (
-            analysis.chain_of_thought
-            and analysis.chain_of_thought.problem_type.lower() in {"debugging", "troubleshooting", "review"}
-        ):
+        # --- Pass 4: Playbook extraction (debugging AND high-reusability research/implementation) ---
+        if analysis.chain_of_thought and reusability >= 0.6:
             try:
                 narrative = build_event_narrative(session)
-                pb_data = await self._pass4(analysis, narrative)
+                is_debug = analysis.chain_of_thought.problem_type.lower() in {
+                    "debugging", "troubleshooting", "review"
+                }
+                pb_data = await self._pass4(analysis, narrative, is_debug=is_debug)
                 if pb_data and not pb_data.get("skip"):
                     analysis.playbook = self._parse_playbook(session.id, pb_data)
-                    logger.info("Pass 4 done: playbook '%s' (%d diagnostic steps)",
+                    logger.info("Pass 4 done: playbook '%s' (%d steps)",
                                 analysis.playbook.title[:60], len(analysis.playbook.diagnostic_steps))
             except Exception as e:
                 logger.error("Pass 4 failed for session %s: %s", session.id, e)
@@ -160,7 +161,7 @@ class SessionAnalyzer:
         )
         return await self._call_llm(self._pass2_model, prompt)
 
-    async def _pass3(self, analysis: SessionAnalysis) -> list:
+    async def _pass3(self, analysis: SessionAnalysis, narrative: str = "") -> list:
         cot = analysis.chain_of_thought
         prompt = PASS3_TRIPLE_EXTRACT.format(
             problem_statement=analysis.problem_statement,
@@ -168,25 +169,35 @@ class SessionAnalyzer:
             methodology_tags=json.dumps(analysis.methodology_tags),
             knowledge_acquired=json.dumps(analysis.knowledge_acquired),
             methodology_pattern=cot.methodology_pattern if cot else "",
+            event_narrative=narrative[:3000] if narrative else "(not available)",
         )
         result = await self._call_llm(self._pass3_model, prompt)
-        # Pass 3 returns a list directly
         if isinstance(result, list):
             return result
         return []
 
-    async def _pass4(self, analysis: SessionAnalysis, narrative: str) -> dict:
-        """Extract a structured troubleshooting playbook (debugging sessions only)."""
+    async def _pass4(self, analysis: SessionAnalysis, narrative: str, *, is_debug: bool = True) -> dict:
+        """Extract a playbook — troubleshooting variant for debug sessions, workflow variant otherwise."""
         cot = analysis.chain_of_thought
-        prompt = PASS4_TROUBLESHOOTING_PLAYBOOK.format(
-            problem_statement=analysis.problem_statement,
-            approach_description=analysis.approach_description,
-            methodology_pattern=cot.methodology_pattern if cot else "",
-            knowledge_gaps=json.dumps(cot.knowledge_gaps_revealed if cot else []),
-            outcome=cot.outcome if cot else "",
-            event_narrative=narrative[:8000],
-        )
-        # Use the strongest model for playbook extraction
+        if is_debug:
+            prompt = PASS4_TROUBLESHOOTING_PLAYBOOK.format(
+                problem_statement=analysis.problem_statement,
+                approach_description=analysis.approach_description,
+                methodology_pattern=cot.methodology_pattern if cot else "",
+                knowledge_gaps=json.dumps(cot.knowledge_gaps_revealed if cot else []),
+                outcome=cot.outcome if cot else "",
+                event_narrative=narrative[:8000],
+            )
+        else:
+            prompt = PASS4_WORKFLOW_PLAYBOOK.format(
+                problem_statement=analysis.problem_statement,
+                approach_description=analysis.approach_description,
+                methodology_pattern=cot.methodology_pattern if cot else "",
+                problem_type=cot.problem_type if cot else "",
+                knowledge_gaps=json.dumps(cot.knowledge_gaps_revealed if cot else []),
+                outcome=cot.outcome if cot else "",
+                event_narrative=narrative[:8000],
+            )
         result = await self._call_llm(self._pass2_model, prompt)
         return result if isinstance(result, dict) else {}
 
@@ -291,6 +302,8 @@ class SessionAnalyzer:
             methodology_pattern=data.get("methodology_pattern", ""),
             reusability_score=data.get("reusability_score", 0.0),
             knowledge_gaps_revealed=data.get("knowledge_gaps_revealed", []),
+            dead_ends=data.get("dead_ends", []),
+            time_allocation=data.get("time_allocation", {}),
             duration_seconds=duration_m * 60,
         )
 

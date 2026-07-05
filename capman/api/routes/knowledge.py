@@ -71,6 +71,23 @@ async def list_knowledge_gaps(request: Request, top: int = 20):
     }
 
 
+@router.post("/gaps/resolve")
+async def resolve_knowledge_gap(request: Request):
+    """Mark a knowledge gap as learned (resolved=1)."""
+    db = request.app.state.db
+    if db is None:
+        return {"ok": False, "error": "database not available"}
+    body = await request.json()
+    concept = body.get("concept", "").strip()
+    if not concept:
+        return {"ok": False, "error": "concept required"}
+    await db._db.execute(
+        "UPDATE knowledge_gaps SET resolved = 1 WHERE concept = ?", (concept,)
+    )
+    await db._db.commit()
+    return {"ok": True}
+
+
 @router.get("/playbooks")
 async def list_playbooks(request: Request, domain: str | None = None, limit: int = 50):
     """All extracted troubleshooting playbooks. Filter by ?domain=networking|react|..."""

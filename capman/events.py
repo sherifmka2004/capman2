@@ -188,6 +188,8 @@ class ChainOfThought:
     methodology_pattern: str = ""  # "docs-first → reproduce → binary-search"
     reusability_score: float = 0.0
     knowledge_gaps_revealed: list[str] = field(default_factory=list)
+    dead_ends: list[str] = field(default_factory=list)     # Abandoned approaches + reason
+    time_allocation: dict = field(default_factory=dict)    # {"search": 120, "read": 300, ...}
     duration_seconds: float = 0.0
 
 

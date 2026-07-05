@@ -92,12 +92,26 @@ Extract the expert's chain of thought as a structured, replicable workflow. Focu
   "outcome": "How the session resolved — success, abandoned, partial",
   "methodology_pattern": "short label: e.g. 'symptom-search → docs → SO → verify'",
   "reusability_score": 0.85,
-  "knowledge_gaps_revealed": ["things they had to look up that an expert would know cold"]
+  "knowledge_gaps_revealed": ["things they had to look up that an expert would know cold"],
+  "dead_ends": [
+    "tried X but abandoned because Y signal was missing",
+    "opened tab A but closed it after Z seconds without reading"
+  ],
+  "time_allocation": {{
+    "search": 120,
+    "read": 300,
+    "implement": 240,
+    "debug": 0,
+    "idle": 60
+  }}
 }}
 
 IMPORTANT: Be specific. Use concrete details from the log.
 If you cannot infer reasoning, write "unknown" — never fabricate.
 Only include decision_points where there is clear evidence of alternatives considered.
+For dead_ends: include up to 3 abandoned paths with the signal that caused abandonment.
+For time_allocation: estimate seconds per phase from the [+MM:SS] timestamps in the narrative.
+  Valid phases: search, read, implement, debug, navigate, idle.
 Return only valid JSON. No markdown fences."""
 
 
@@ -161,13 +175,19 @@ Tags: {methodology_tags}
 Knowledge acquired: {knowledge_acquired}
 Chain of thought methodology: {methodology_pattern}
 
+## Raw Event Narrative (for specific facts — error messages, commands, versions)
+{event_narrative}
+
 ## Task
-Extract factual (subject, predicate, object) triples representing knowledge from this session.
+Extract factual (subject, predicate, object) triples from BOTH the session summary above
+AND the raw event narrative. The narrative contains specific details (exact errors, commands,
+tool names, version numbers) that the summary may have omitted.
 Focus on:
 - Technical facts (A causes B, A requires B, A is part of B)
 - Tool/technology relationships
 - Problem-solution pairs
 - Methodology patterns (pattern X is useful for problem type Y)
+- Specific error → cause or error → fix relationships from the narrative
 
 ## Output Format (strict JSON array)
 [
@@ -190,6 +210,56 @@ Valid predicates: is_caused_by, resolves, requires, enables, part_of, related_to
 
 Limit to 15 triples maximum. Only include triples with confidence >= 0.7.
 Return only valid JSON array. No markdown fences."""
+
+
+PASS4_WORKFLOW_PLAYBOOK = """You are extracting a REPLAYABLE workflow from a research or implementation session.
+Future-them (or an AI assistant) needs to follow this playbook to repeat the same workflow
+on a similar task WITHOUT having to redo all the searching and navigation.
+
+## Session Context
+Problem: {problem_statement}
+Approach: {approach_description}
+Methodology pattern: {methodology_pattern}
+Session type: {problem_type}
+Knowledge gaps revealed: {knowledge_gaps}
+Outcome: {outcome}
+
+## Full event narrative
+{event_narrative}
+
+## Your Task
+Extract a REPLAYABLE step-by-step workflow. Focus on being concrete and actionable —
+every step should be something a future person can actually do.
+
+## Output Format (strict JSON)
+{{
+  "title":            "Short descriptive title (e.g. 'How to find and authenticate an Apify actor API')",
+  "domain":           "single word — research|implementation|integration|configuration|learning|...",
+  "symptoms":         ["trigger condition 1 — when you would need this workflow", "trigger 2"],
+  "context_signals":  ["applies when platform is X", "applies when task involves Y"],
+  "diagnostic_steps": [
+    {{
+      "sequence":         1,
+      "action":           "Specific step to take (URL to visit, search query to use, command to run)",
+      "rationale":        "Why this step — what information or outcome it provides",
+      "expected_signal":  "What you should see/find if this step succeeded",
+      "tool":             "tool, browser, terminal, or platform used"
+    }}
+  ],
+  "root_cause":   "Key insight or prerequisite knowledge that makes this workflow work",
+  "fix":          ["Concrete deliverable step 1", "step 2"],
+  "verification": ["How to confirm you completed the workflow correctly"],
+  "references":   ["URL of the page, doc, or tool that was central to this workflow"],
+  "reusability_score": 0.75
+}}
+
+CRITICAL RULES:
+- Every step must be CONCRETE (a URL, a search term, a menu path, a command).
+- Symptoms are CONDITIONS under which someone would need this workflow, not errors.
+- root_cause here means the KEY INSIGHT — the thing that unlocks the solution.
+- If the session was too short or trivial to produce a reusable workflow, return {{"skip": true}}.
+
+Return only valid JSON. No markdown fences."""
 
 
 def build_event_narrative(session) -> str:
