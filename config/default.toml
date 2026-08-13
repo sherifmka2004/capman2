@@ -168,6 +168,31 @@ chroma_path = "~/.capman/chroma"
 knowledge_dir = "~/.capman/knowledge"
 obsidian_vault = ""
 
+[storage.retention]
+# The event timeline is otherwise unbounded: with the full desktop sensor set
+# it grows 10-20k events/day (~1.5-2.5 GB/year) and nothing ever prunes it.
+#
+# Retention is tiered by event type rather than by age alone. High-signal
+# events — shell commands, URLs, searches, code diffs, file ops, page and
+# document text — are NEVER pruned; they are what analysis and recall are built
+# from, and they are comparatively tiny. Only high-volume, low-signal activity
+# expires, and its per-session counts are rolled up into session_event_stats
+# first, so aggregate activity survives even when the raw rows do not.
+enabled = true
+check_interval_hours = 24
+protect_analyzed_sessions = true   # never prune a session that produced a playbook
+
+[storage.retention.ttl_days]
+# 0 or omitted = keep forever. Protected types are ignored if listed here.
+dom_mutation       = 7
+mouse_heatmap_tick = 14
+mouse_scroll       = 14
+mouse_click        = 30
+keystroke          = 30
+screenshot         = 30
+window_focus       = 90
+window_blur        = 90
+
 [storage.vector]
 chunk_chars = 800            # text chunk size for embedding
 chunk_overlap = 100          # overlap between consecutive chunks

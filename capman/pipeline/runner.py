@@ -39,6 +39,7 @@ class PipelineRunner:
         analysis_task = asyncio.create_task(self._analysis_loop())
         timeout_task = asyncio.create_task(self._timeout_checker())
         recategorize_task = asyncio.create_task(self._daily_recategorize_loop())
+        retention_task = asyncio.create_task(self._retention_loop())
 
         try:
             while not self._stop.is_set():
@@ -62,10 +63,12 @@ class PipelineRunner:
             analysis_task.cancel()
             timeout_task.cancel()
             recategorize_task.cancel()
+            retention_task.cancel()
             try:
                 await analysis_task
                 await timeout_task
                 await recategorize_task
+                await retention_task
             except asyncio.CancelledError:
                 pass
 
@@ -280,6 +283,7 @@ class PipelineRunner:
 
         try:
             enriched_session = self._enricher.enrich_session(session)
+            await self._persist_screenshots(enriched_session)
             from capman.pipeline.analyzer import SessionAnalyzer
             analyzer = SessionAnalyzer(self._config)
             analysis = await analyzer.analyze(enriched_session)
@@ -318,6 +322,45 @@ class PipelineRunner:
             graph.save()
         except Exception as e:
             logger.error("Knowledge graph update failed: %s", e)
+
+    async def _persist_screenshots(self, session: Session) -> None:
+        """Record screenshots and their OCR text.
+
+        Two long-standing gaps closed here. The `screenshots` table has existed
+        since the first commit and was never written to — three UIs rendered a
+        count that was always zero while the disk filled. And OCR text was only
+        ever mutated onto the in-memory Event, after its row had already been
+        written, so it was recomputed from the image every time and never
+        searchable.
+        """
+        from capman.events import EventType
+
+        rows, docs = [], []
+        for event in session.events:
+            if event.type != EventType.SCREENSHOT:
+                continue
+            path = event.payload.get("path", "")
+            if not path:
+                continue
+            ocr = event.payload.get("ocr_text", "") or ""
+            rows.append((event.id, event.id, path, event.ts, ocr, session.id))
+            if ocr.strip():
+                docs.append({
+                    "id": f"ocr:{event.id}", "kind": "ocr", "body": ocr, "ts": event.ts,
+                    "title": event.window_title or "", "uri": path,
+                    "ref_id": event.id, "session_id": session.id,
+                })
+
+        if not rows:
+            return
+        try:
+            await self._db.save_screenshots(rows)
+            if docs:
+                await self._db.upsert_documents_bulk(docs)
+            logger.info("Persisted %d screenshots (%d with OCR text) for session %s",
+                        len(rows), len(docs), session.id[:8])
+        except Exception as e:
+            logger.warning("Screenshot persist failed for session %s: %s", session.id, e)
 
     async def _index_session_summary(self, analysis) -> None:
         """Make an analysed session searchable.
@@ -427,6 +470,32 @@ class PipelineRunner:
                 except Exception as e:
                     logger.debug("Daily brain recategorization skipped: %s", e)
             await asyncio.sleep(3600)
+
+    async def _retention_loop(self) -> None:
+        """Prune expired low-signal events on a fixed interval.
+
+        Deliberately not run at startup: a first prune should not compete with
+        sensor initialisation, and nothing is urgent on a timeline that has
+        already been growing unbounded.
+        """
+        cfg = self._config.get("storage", {}).get("retention", {})
+        if not cfg.get("enabled", True):
+            logger.info("Retention disabled by config — event timeline will grow unbounded")
+            return
+
+        interval = max(1, int(cfg.get("check_interval_hours", 24))) * 3600
+        await asyncio.sleep(600)  # let startup settle
+
+        while True:
+            try:
+                from capman.storage.retention import prune_events
+                await self._db.flush()
+                deleted = await prune_events(self._db, self._config)
+                if deleted:
+                    logger.info("Retention removed %d events: %s", sum(deleted.values()), deleted)
+            except Exception as e:
+                logger.warning("Retention pass failed: %s", e, exc_info=True)
+            await asyncio.sleep(interval)
 
     def stop(self) -> None:
         self._stop.set()

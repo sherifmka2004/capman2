@@ -224,6 +224,23 @@ class TimelineDB(TimelineDBAdapter):
         await self._db.commit()
         return len(docs)
 
+    async def save_screenshots(self, rows: list[tuple]) -> None:
+        """Persist screenshot metadata + OCR text.
+
+        Rows are (id, event_id, path, ts, ocr_text, session_id).
+        """
+        if not rows:
+            return
+        await self._db.executemany(
+            """INSERT INTO screenshots (id, event_id, path, ts, ocr_text, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   ocr_text = excluded.ocr_text,
+                   session_id = COALESCE(excluded.session_id, session_id)""",
+            rows,
+        )
+        await self._db.commit()
+
     async def document_count(self, kind: str | None = None) -> int:
         sql = "SELECT COUNT(*) FROM documents"
         params: tuple = ()
