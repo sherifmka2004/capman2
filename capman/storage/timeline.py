@@ -267,37 +267,31 @@ class TimelineDB(TimelineDBAdapter):
         await self.upsert_triple(triple)
 
     async def upsert_triple(self, triple: Triple) -> None:
-        """Insert or increment observed_count when the same (subject, predicate, object) recurs."""
-        async with self._db.execute(
-            "SELECT id, observed_count FROM knowledge_triples "
-            "WHERE subject = ? AND predicate = ? AND object = ?",
-            (triple.subject, triple.predicate, triple.object),
-        ) as cur:
-            row = await cur.fetchone()
+        """Insert, or increment observed_count when the same (s, p, o) recurs.
 
-        if row:
-            await self._db.execute(
-                "UPDATE knowledge_triples SET observed_count = observed_count + 1, "
-                "last_observed = ?, confidence = MAX(confidence, ?) WHERE id = ?",
-                (triple.observed_at, triple.confidence, row["id"]),
-            )
-        else:
-            await self._db.execute(
-                """INSERT INTO knowledge_triples
+        Single statement against idx_triples_spo. The previous read-then-write
+        was a check-then-act race that could produce duplicate triples.
+        """
+        await self._db.execute(
+            """INSERT INTO knowledge_triples
                    (id, subject, predicate, object, confidence, observed_count,
                     first_seen, last_observed, source_session)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-                (
-                    triple.id,
-                    triple.subject,
-                    triple.predicate,
-                    triple.object,
-                    triple.confidence,
-                    triple.observed_at,
-                    triple.observed_at,
-                    triple.source_session,
-                ),
-            )
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+               ON CONFLICT(subject, predicate, object) DO UPDATE SET
+                   observed_count = observed_count + 1,
+                   last_observed  = excluded.last_observed,
+                   confidence     = MAX(confidence, excluded.confidence)""",
+            (
+                triple.id,
+                triple.subject,
+                triple.predicate,
+                triple.object,
+                triple.confidence,
+                triple.observed_at,
+                triple.observed_at,
+                triple.source_session,
+            ),
+        )
         await self._db.commit()
 
     async def save_playbook(self, pb: TroubleshootingPlaybook) -> None:

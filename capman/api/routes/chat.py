@@ -366,21 +366,28 @@ async def _build_context(question: str, request: Request) -> str:
                 for s, e in idle_intervals:
                     day = time.strftime("%Y-%m-%d", time.localtime(s))
                     idle_by_day[day] = idle_by_day.get(day, 0.0) + (e - s)
+                # Observed span per local day, in one grouped query rather than a
+                # per-day subquery in a loop. SQLite's 'localtime' modifier also
+                # handles DST correctly — the previous
+                # mktime(strptime(day, "%Y-%m-%d")) left tm_isdst = -1, so day
+                # boundaries drifted an hour across a transition and idle time
+                # was attributed to the wrong day.
+                async with db._db.execute(
+                    """SELECT date(ts, 'unixepoch', 'localtime') AS day,
+                              MIN(ts) AS lo, MAX(ts) AS hi
+                       FROM events WHERE ts > ?
+                       GROUP BY day ORDER BY day DESC LIMIT 7""",
+                    (since,),
+                ) as cur2:
+                    spans = {r["day"]: (r["lo"], r["hi"]) for r in await cur2.fetchall()}
+
                 lines = []
                 for day in sorted(idle_by_day.keys(), reverse=True)[:7]:
                     idle_h = idle_by_day[day] / 3600.0
                     # Active hours = time we observed *any* event between first
                     # and last event of that day, minus idle.
-                    async with db._db.execute(
-                        "SELECT MIN(ts) AS lo, MAX(ts) AS hi FROM events "
-                        "WHERE ts >= ? AND ts < ?",
-                        (
-                            time.mktime(time.strptime(day, "%Y-%m-%d")),
-                            time.mktime(time.strptime(day, "%Y-%m-%d")) + 86400,
-                        ),
-                    ) as cur2:
-                        span_row = await cur2.fetchone()
-                    span_h = ((span_row["hi"] or 0) - (span_row["lo"] or 0)) / 3600.0 if span_row else 0
+                    lo, hi = spans.get(day, (0, 0))
+                    span_h = ((hi or 0) - (lo or 0)) / 3600.0
                     active_h = max(0.0, span_h - idle_h)
                     lines.append(
                         f"  [{day}] active ≈ {active_h:.1f} h  |  idle ≈ {idle_h:.1f} h  "
