@@ -168,6 +168,17 @@ chroma_path = "~/.capman/chroma"
 knowledge_dir = "~/.capman/knowledge"
 obsidian_vault = ""
 
+[storage.sharing]
+# The ONLY path by which data leaves this machine. Allow-list, not deny-list:
+# a kind nobody explicitly permitted is not exportable, so adding a new capture
+# type can never silently widen what gets shared.
+#
+# Raw capture — page text, document text, OCR, screenshots, keystrokes,
+# clipboard, raw events — is NOT exportable at any setting. Only the derived
+# layer can leave: troubleshooting playbooks, concept nodes, session summaries.
+allow_kinds = ["playbook", "node", "session"]
+redact_by_default = true    # strip emails, home paths, IPs and credential-shaped strings
+
 [storage.retention]
 # The event timeline is otherwise unbounded: with the full desktop sensor set
 # it grows 10-20k events/day (~1.5-2.5 GB/year) and nothing ever prunes it.

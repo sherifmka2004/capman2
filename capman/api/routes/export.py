@@ -1,0 +1,164 @@
+"""GET /export — controlled export of *extracted knowledge*.
+
+This is the only sanctioned way data leaves the machine, and it is deliberately
+narrow. capman2 captures keystrokes, clipboard contents, screenshots and full
+page text; none of that is exportable here at any setting. What can leave is
+the derived layer — playbooks, concept nodes, chain-of-thought, session
+summaries — which is the part with value to anyone else and the part a user
+might reasonably want to share.
+
+Policy is allow-list, not deny-list: a kind that nobody has explicitly
+permitted is not exportable, so adding a new capture type can never silently
+widen what gets shared. `--redact` additionally strips hostnames, absolute
+paths, emails and anything that looks like a credential from the output.
+
+Defaults to a dry run. You have to ask for the payload.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+from typing import Any
+
+from fastapi import APIRouter, Query, Request
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/export", tags=["export"])
+
+#: Derived knowledge only. Raw capture is absent by construction, not by filter.
+EXPORTABLE_KINDS = ("playbook", "node", "session")
+
+#: Never exportable, at any setting. Listed explicitly so the intent is
+#: reviewable and a future contributor has to argue with it in a diff.
+NEVER_EXPORTABLE = ("page", "doc", "ocr", "event", "screenshot", "keystroke", "clipboard")
+
+_REDACTIONS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[EMAIL]"),
+    # No \b before the slash: a space followed by "/" is not a word boundary
+    # (both are non-word characters), so an anchored \b never matches here.
+    (re.compile(r"(?:/Users|/home)/[^/\s]+"), "[HOME]"),
+    (re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+"), "[HOME]"),
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b"), "[IP]"),
+    (re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd|bearer)\b\s*[:=]\s*\S+"),
+     r"\1=[REDACTED]"),
+    (re.compile(r"\b(?:sk|pk|ghp|gho|xox[baprs])-[A-Za-z0-9_\-]{10,}"), "[CREDENTIAL]"),
+)
+
+
+def redact(text: str) -> str:
+    """Strip identifying and secret-shaped substrings."""
+    if not text:
+        return text
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def resolve_policy(config: dict) -> list[str]:
+    """Kinds the user has permitted, intersected with what is ever exportable."""
+    cfg = config.get("storage", {}).get("sharing", {}) if config else {}
+    allowed = cfg.get("allow_kinds")
+    if allowed is None:
+        allowed = list(EXPORTABLE_KINDS)
+    resolved = []
+    for kind in allowed:
+        if kind in NEVER_EXPORTABLE:
+            logger.warning("Refusing to export %r — raw capture is never exportable", kind)
+            continue
+        if kind not in EXPORTABLE_KINDS:
+            logger.warning("Ignoring unknown export kind %r", kind)
+            continue
+        resolved.append(kind)
+    return resolved
+
+
+async def collect(db, kinds: list[str], since: float | None = None,
+                  limit: int = 1000, do_redact: bool = True) -> list[dict[str, Any]]:
+    if not kinds or db is None:
+        return []
+    sql = ("SELECT id, kind, title, uri, ts, session_id, body FROM documents "
+           f"WHERE kind IN ({','.join('?' * len(kinds))})")
+    params: list[Any] = list(kinds)
+    if since:
+        sql += " AND ts >= ?"
+        params.append(since)
+    sql += " ORDER BY ts DESC LIMIT ?"
+    params.append(limit)
+
+    async with db._db.execute(sql, params) as cur:
+        rows = await cur.fetchall()
+
+    out = []
+    for r in rows:
+        item = {"id": r["id"], "kind": r["kind"], "title": r["title"] or "",
+                "ts": r["ts"], "body": r["body"] or ""}
+        if do_redact:
+            item["title"] = redact(item["title"])
+            item["body"] = redact(item["body"])
+        else:
+            item["uri"] = r["uri"] or ""
+        out.append(item)
+    return out
+
+
+@router.get("")
+async def export(
+    kinds: str | None = Query(None, description=f"Subset of {','.join(EXPORTABLE_KINDS)}"),
+    since_days: int | None = Query(None, ge=1),
+    limit: int = Query(1000, ge=1, le=10000),
+    redact_output: bool = Query(True, alias="redact"),
+    dry_run: bool = Query(True, description="Report what would be exported without returning it"),
+    request: Request = None,
+):
+    config = request.app.state.config or {}
+    db = request.app.state.db
+
+    permitted = resolve_policy(config)
+    requested = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else permitted
+    selected = [k for k in requested if k in permitted]
+    refused = [k for k in requested if k not in permitted]
+
+    since = time.time() - since_days * 86400 if since_days else None
+    items = await collect(db, selected, since, limit, redact_output)
+
+    summary = {
+        "policy": {"permitted_kinds": permitted, "never_exportable": list(NEVER_EXPORTABLE)},
+        "requested_kinds": requested,
+        "exported_kinds": selected,
+        "refused_kinds": refused,
+        "redacted": redact_output,
+        "count": len(items),
+        "counts_by_kind": {k: sum(1 for i in items if i["kind"] == k) for k in selected},
+        "dry_run": dry_run,
+    }
+    if dry_run:
+        summary["sample_titles"] = [i["title"][:80] for i in items[:5]]
+        return summary
+
+    summary["items"] = items
+    return summary
+
+
+@router.get("/jsonl")
+async def export_jsonl(
+    kinds: str | None = Query(None),
+    since_days: int | None = Query(None, ge=1),
+    limit: int = Query(1000, ge=1, le=10000),
+    redact_output: bool = Query(True, alias="redact"),
+    request: Request = None,
+):
+    """Same policy, newline-delimited JSON for piping into other tools."""
+    from fastapi.responses import PlainTextResponse
+
+    config = request.app.state.config or {}
+    db = request.app.state.db
+    permitted = resolve_policy(config)
+    requested = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else permitted
+    selected = [k for k in requested if k in permitted]
+
+    items = await collect(db, selected, time.time() - since_days * 86400 if since_days else None,
+                          limit, redact_output)
+    return PlainTextResponse("\n".join(json.dumps(i, ensure_ascii=False) for i in items),
+                             media_type="application/x-ndjson")
