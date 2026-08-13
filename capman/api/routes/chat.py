@@ -37,6 +37,12 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
 
 
+def _index(db):
+    """Hybrid search index over the timeline database."""
+    from capman.storage.search import SearchIndex
+    return SearchIndex(db)
+
+
 async def _build_context(question: str, request: Request) -> str:
     """Pull relevant data from all stores to ground the LLM response."""
     config = request.app.state.config
@@ -46,18 +52,15 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 1. Vector search — semantically relevant sessions and nodes
     try:
-        from capman.storage.vector import get_vector_store
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = get_vector_store(chroma_path)
-        if vs.count() > 0:
-            results = vs.search(question, top_k=int(_chat.get("vector_top_k", 5)))
-            if results:
-                lines = []
-                for r in results:
-                    lines.append(f"  [{r['score']:.2f}] ({r['type']}) {r['title']}: {r['text'][:200]}")
-                sections.append("## Semantically Relevant Knowledge\n" + "\n".join(lines))
+        results = await _index(db).hybrid_search(question, top_k=int(_chat.get("vector_top_k", 5)))
+        if results:
+            lines = []
+            for r in results:
+                lines.append(f"  [{r['score']:.3f}] ({r.get('type','')}) "
+                             f"{r.get('title','')}: {(r.get('text') or '')[:200]}")
+            sections.append("## Relevant Knowledge (keyword + semantic)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Vector search skipped: %s", e)
+        logger.warning("Knowledge search skipped: %s", e)
 
     # 2. Recent session analyses
     if db:
@@ -247,64 +250,46 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 6a-bis. Semantically relevant document content (slides/pages/sheets the user actually read)
     try:
-        from capman.storage.vector import get_vector_store
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = get_vector_store(chroma_path)
-        doc_hits = vs.search(question, top_k=int(_chat.get("doc_top_k", 6)), types=["doc"])
+        doc_hits = await _index(db).hybrid_search(
+            question, kinds=["doc"], top_k=int(_chat.get("doc_top_k", 6)))
         if doc_hits:
             lines = []
             for h in doc_hits:
-                meta = h.get("metadata", {}) or {}
-                ts = meta.get("ts", 0)
-                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
-                doc_name = meta.get("doc_name", "") or meta.get("doc_path", "") or ""
-                kind = meta.get("item_kind", "")
-                idx = meta.get("item_index", "")
-                label = meta.get("item_label", "")
-                head = f"{doc_name} — {kind} {idx}".strip()
-                if label:
-                    head += f": {label}"
-                lines.append(f"  [{when}] [{h['score']:.2f}] {head}")
-                if meta.get("app"):
-                    lines.append(f"    App: {meta['app']}")
-                lines.append(f"    Excerpt: {h['text'][:800]}")
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(h["ts"])) if h.get("ts") else ""
+                lines.append(f"  [{when}] [{h['score']:.3f}] {h.get('title','')}")
+                if h.get("url"):
+                    lines.append(f"    Source: {h['url']}")
+                lines.append(f"    Excerpt: {(h.get('text') or '')[:800]}")
                 lines.append("")
             sections.append("## Relevant Document Content (slides / pages / sheets the user actually read)\n"
                             + "\n".join(lines))
     except Exception as e:
-        logger.debug("Doc semantic search skipped: %s", e)
+        logger.warning("Doc search skipped: %s", e)
 
     # 6b. Semantically relevant page chunks (vector search on embedded page text)
     try:
-        from capman.storage.vector import get_vector_store
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = get_vector_store(chroma_path)
-        page_hits = vs.search(question, top_k=int(_chat.get("page_top_k", 6)), types=["page"])
+        page_hits = await _index(db).hybrid_search(
+            question, kinds=["page"], top_k=int(_chat.get("page_top_k", 6)))
         if page_hits:
             lines = []
             for h in page_hits:
-                ts = h["metadata"].get("ts", 0)
-                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
-                title = h.get("title", "")
-                url = h.get("url", "")
-                lines.append(f"  [{when}] [{h['score']:.2f}] {title}")
-                lines.append(f"    URL: {url}")
-                lines.append(f"    Excerpt: {h['text'][:800]}")
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(h["ts"])) if h.get("ts") else ""
+                lines.append(f"  [{when}] [{h['score']:.3f}] {h.get('title','')}")
+                lines.append(f"    URL: {h.get('url','')}")
+                lines.append(f"    Excerpt: {(h.get('text') or '')[:800]}")
                 lines.append("")
-            sections.append("## Relevant Page Content (semantic match)\n" + "\n".join(lines))
+            sections.append("## Relevant Page Content\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Page semantic search skipped: %s", e)
+        logger.warning("Page search skipped: %s", e)
 
     # 6c. Most relevant troubleshooting playbooks (THE differentiator)
     try:
-        from capman.storage.vector import get_vector_store
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = get_vector_store(chroma_path)
-        pb_hits = vs.search(question, top_k=int(_chat.get("playbook_top_k", 3)), types=["playbook"])
+        pb_hits = await _index(db).hybrid_search(
+            question, kinds=["playbook"], top_k=int(_chat.get("playbook_top_k", 3)))
         if pb_hits and db:
             lines = []
             for h in pb_hits:
-                pb_id = h["metadata"].get("playbook_id", "")
+                pb_id = h.get("ref_id") or (h.get("id") or "").split(":", 1)[-1]
                 if not pb_id:
                     continue
                 async with db._db.execute(

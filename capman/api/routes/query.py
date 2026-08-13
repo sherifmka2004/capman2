@@ -25,26 +25,15 @@ async def hybrid_query(
     a reason not to. Pure `vector` misses exact strings (commands, paths, error
     codes); pure `keyword` misses paraphrases.
     """
-    config = request.app.state.config
     db = request.app.state.db
     kind_list = [k.strip() for k in kinds.split(",") if k.strip()] if kinds else None
 
     try:
-        vs = None
-        if mode in ("hybrid", "vector"):
-            try:
-                from capman.storage.vector import get_vector_store
-                chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-                vs = get_vector_store(chroma_path)
-            except Exception as e:
-                # Keyword-only is a usable degradation, not a failure.
-                logger.warning("Vector store unavailable, falling back to keyword: %s", e)
-
-        index = SearchIndex(db, vs)
+        index = SearchIndex(db)
         if mode == "keyword":
             results = await index.keyword_search(q, kind_list, limit=top_k)
         elif mode == "vector":
-            results = index.vector_search(q, kind_list, limit=top_k)
+            results = await index.semantic_search(q, kind_list, limit=top_k)
         else:
             results = await index.hybrid_search(q, kind_list, top_k=top_k)
 

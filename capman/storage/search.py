@@ -25,11 +25,6 @@ CANDIDATE_DEPTH = 60
 #: Kinds stored in `documents`.
 ALL_KINDS = ("page", "doc", "ocr", "session", "playbook", "node")
 
-#: The vector store predates `documents` and names one kind differently.
-#: Translated at the boundary so callers only ever deal in ALL_KINDS.
-_KIND_TO_VECTOR_TYPE = {"node": "knowledge_node"}
-_VECTOR_TYPE_TO_KIND = {v: k for k, v in _KIND_TO_VECTOR_TYPE.items()}
-
 _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-./:@]+")
 
 # Words that carry no lexical signal but would otherwise dominate an OR query.
@@ -68,23 +63,6 @@ def escape_fts_query(question: str, *, mode: str = "OR") -> str:
     return joiner.join(quoted)
 
 
-def normalize_vector_id(doc_id: str) -> str:
-    """Map a vector-store id onto its `documents.id`.
-
-    The vector store keys page and doc entries per *chunk*
-    (`page:<urlhash>:<chunk>`) while `documents` holds one row per unit
-    (`page:<urlhash>`). Without collapsing the chunk suffix the two rankers
-    could never agree on an id, and RRF would silently degrade into
-    concatenating two lists instead of fusing them.
-    """
-    if not doc_id:
-        return doc_id
-    parts = doc_id.split(":")
-    if len(parts) == 3 and parts[0] in ("page", "doc") and parts[2].isdigit():
-        return f"{parts[0]}:{parts[1]}"
-    return doc_id
-
-
 def rrf_fuse(rankings: Iterable[list[str]], k: int = RRF_K) -> dict[str, float]:
     """Fuse ranked ID lists into {id: score}. Rank is 1-based."""
     scores: dict[str, float] = {}
@@ -95,15 +73,15 @@ def rrf_fuse(rankings: Iterable[list[str]], k: int = RRF_K) -> dict[str, float]:
 
 
 class SearchIndex:
-    """Hybrid search over `documents` (BM25) and a vector store.
+    """Hybrid search over `documents`: BM25 from FTS5, semantics from vectors.
 
-    The vector ranker is injected rather than constructed so the store can be
-    swapped without touching this class.
+    Both rankers read the same table, so they agree on ids by construction and
+    RRF can actually fuse them. `vector_index` is injectable for tests.
     """
 
-    def __init__(self, db, vector_store=None):
-        self._db = db          # TimelineDB
-        self._vs = vector_store
+    def __init__(self, db, vector_index=None):
+        self._db = db                     # TimelineDB
+        self._vector_index = vector_index
 
     # -- individual rankers -------------------------------------------------
 
@@ -170,25 +148,22 @@ class SearchIndex:
             for r in rows
         ]
 
-    def vector_search(
+    async def semantic_search(
         self, query: str, kinds: Iterable[str] | None = None, limit: int = CANDIDATE_DEPTH
     ) -> list[dict[str, Any]]:
-        if self._vs is None:
-            return []
-        types = [_KIND_TO_VECTOR_TYPE.get(k, k) for k in kinds] if kinds else None
+        """Vector ranker over `documents.embedding`."""
+        kinds = list(kinds) if kinds else None
         try:
-            raw = self._vs.search(query, top_k=limit, types=types)
+            index = self._vector_index
+            if index is None:
+                from capman.storage.vectors import VectorIndex
+                index = VectorIndex(self._db)
+            if await index.count() == 0:
+                return []
+            return await index.search(query, kinds, limit=limit)
         except Exception as e:
-            logger.warning("Vector search failed: %s", e)
+            logger.warning("Semantic search failed: %s", e)
             return []
-
-        out = []
-        for hit in raw:
-            hit = dict(hit)
-            hit["id"] = normalize_vector_id(hit.get("id", ""))
-            hit["type"] = _VECTOR_TYPE_TO_KIND.get(hit.get("type", ""), hit.get("type", ""))
-            out.append(hit)
-        return out
 
     # -- fusion -------------------------------------------------------------
 
@@ -207,7 +182,7 @@ class SearchIndex:
         kinds = list(kinds) if kinds else None
 
         kw = await self.keyword_search(query, kinds, limit=depth)
-        vec = self.vector_search(query, kinds, limit=depth)
+        vec = await self.semantic_search(query, kinds, limit=depth)
 
         by_id: dict[str, dict[str, Any]] = {}
         for hit in vec:            # vector first so keyword snippets win on merge

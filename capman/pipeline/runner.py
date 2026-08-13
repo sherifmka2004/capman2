@@ -91,7 +91,7 @@ class PipelineRunner:
             except Exception:
                 pass
 
-        # Page text → embed full content into ChromaDB, store slim ref in SQLite
+        # Page text → persist full text as a searchable document, slim the payload
         if event.type == EventType.PAGE_TEXT:
             full = event.payload.get("excerpt", "") or ""
             asyncio.create_task(self._embed_page_text(
@@ -157,18 +157,7 @@ class PipelineRunner:
         except Exception as e:
             logger.warning("Page document persist failed for %s: %s", url[:60], e)
 
-        try:
-            from capman.storage.vector import get_vector_store
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = get_vector_store(chroma_path, self._chunk_chars, self._chunk_overlap)
-            count = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: vs.add_page_text(url=url, title=title, text=text, ts=ts, headings=headings),
-            )
-            if count:
-                logger.info("Embedded page %s (%d chunks, %d chars)", url[:60], count, len(text))
-        except Exception as e:
-            logger.debug("Page text embedding skipped: %s", e)
+        await self._embed_pending()
 
     async def _embed_doc_text(self, doc_path: str, doc_name: str, item_kind: str,
                               item_index: int, item_label: str, text: str,
@@ -189,24 +178,7 @@ class PipelineRunner:
         except Exception as e:
             logger.warning("Doc document persist failed for %s: %s", doc_path[:60], e)
 
-        try:
-            from capman.storage.vector import get_vector_store
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = get_vector_store(chroma_path, self._chunk_chars, self._chunk_overlap)
-            count = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: vs.add_doc_text(
-                    doc_path=doc_path, doc_name=doc_name,
-                    item_kind=item_kind, item_index=item_index, item_label=item_label,
-                    text=text, ts=ts, app=app,
-                ),
-            )
-            if count:
-                logger.info("Embedded %s %d of %s (%d chunks, %d chars)",
-                            item_kind, item_index, doc_name or doc_path or app,
-                            count, len(text))
-        except Exception as e:
-            logger.debug("Doc text embedding skipped: %s", e)
+        await self._embed_pending()
 
     async def _close_session(self, session: Session) -> None:
         """Persist session and schedule analysis."""
@@ -323,6 +295,18 @@ class PipelineRunner:
         except Exception as e:
             logger.error("Knowledge graph update failed: %s", e)
 
+    async def _embed_pending(self) -> None:
+        """Embed any documents that do not yet have a vector.
+
+        Static embeddings are fast enough (~200 texts in 2ms) to do inline
+        rather than in a fire-and-forget task whose failures nobody sees.
+        """
+        try:
+            from capman.storage.vectors import VectorIndex
+            await VectorIndex(self._db).index_documents(limit=64)
+        except Exception as e:
+            logger.warning("Embedding pending documents failed: %s", e)
+
     async def _persist_screenshots(self, session: Session) -> None:
         """Record screenshots and their OCR text.
 
@@ -388,21 +372,12 @@ class PipelineRunner:
         except Exception as e:
             logger.warning("Session summary persist failed for %s: %s", analysis.session_id, e)
 
-        try:
-            from capman.storage.vector import get_vector_store
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = get_vector_store(chroma_path, self._chunk_chars, self._chunk_overlap)
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: vs.add_session_summary(analysis.session_id, summary)
-            )
-        except Exception as e:
-            logger.warning("Session summary embedding failed for %s: %s", analysis.session_id, e)
+        await self._embed_pending()
 
     async def _save_playbook(self, analysis) -> None:
         """Persist a troubleshooting playbook to DB, markdown, and vector store."""
         try:
             knowledge_dir = self._config.get("storage", {}).get("knowledge_dir", "~/.capman/knowledge")
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
 
             await self._db.save_playbook(analysis.playbook)
 
@@ -422,16 +397,12 @@ class PipelineRunner:
                     title=pb.title or "", ref_id=pb.id, session_id=analysis.session_id,
                 )
 
-            from capman.knowledge.playbooks import save_playbook_markdown, index_playbook_in_vector_store
+            from capman.knowledge.playbooks import save_playbook_markdown
             from pathlib import Path
             path = save_playbook_markdown(analysis.playbook, Path(knowledge_dir).expanduser())
             logger.info("Playbook saved: %s", path)
 
-            # Index for /context/suggest semantic retrieval (off the loop)
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: index_playbook_in_vector_store(analysis.playbook, str(Path(chroma_path).expanduser())),
-            )
+            await self._embed_pending()
         except Exception as e:
             logger.error("Playbook save failed: %s", e)
 

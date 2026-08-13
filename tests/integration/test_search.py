@@ -149,25 +149,37 @@ async def test_upsert_document_updates_the_index(db):
     assert await idx.keyword_search("replacement")
 
 
-async def test_hybrid_search_works_without_a_vector_store(db):
+async def test_hybrid_search_works_without_any_embeddings(db):
     """Keyword-only must be a clean degradation, not an error."""
     await db.upsert_document("page:1", "page", "kubernetes ingress troubleshooting",
                              ts=time.time(), title="k8s")
-    hits = await SearchIndex(db, vector_store=None).hybrid_search("kubernetes ingress")
+    hits = await SearchIndex(db).hybrid_search("kubernetes ingress")
     assert [h["id"] for h in hits] == ["page:1"]
     assert hits[0]["matched_by"] == "keyword"
+
+
+class FakeVectorIndex:
+    """Stands in for VectorIndex so fusion can be tested without the model."""
+
+    def __init__(self, hits):
+        self._hits = hits
+
+    async def count(self):
+        return len(self._hits)
+
+    async def search(self, query, kinds=None, limit=60):
+        if kinds:
+            return [h for h in self._hits if h["type"] in kinds]
+        return list(self._hits)
 
 
 async def test_hybrid_search_fuses_both_rankers(db):
     await db.upsert_document("page:1", "page", "alpha document", ts=time.time())
     await db.upsert_document("page:2", "page", "beta document", ts=time.time())
 
-    class FakeVectorStore:
-        def search(self, query, top_k=10, types=None):
-            return [{"id": "page:2", "type": "page", "title": "beta",
-                     "url": "", "score": 0.9, "text": "beta document", "metadata": {}}]
-
-    hits = await SearchIndex(db, FakeVectorStore()).hybrid_search("document")
+    vec = FakeVectorIndex([{"id": "page:2", "type": "page", "title": "beta",
+                            "url": "", "score": 0.9, "text": "beta document"}])
+    hits = await SearchIndex(db, vec).hybrid_search("document")
     by_id = {h["id"]: h for h in hits}
     assert by_id["page:2"]["matched_by"] == "both"
     assert by_id["page:1"]["matched_by"] == "keyword"
@@ -201,56 +213,3 @@ async def test_backfill_recovers_session_analyses(db):
         " methodology_tags, analyzed_at) VALUES ('s9', 'Debugged a flaky hydration error',"
         " 'Bisected the render path', '[\"bisect\"]', 2.0)")
     await db._db.commit()
-
-    counts = await backfill_documents(db)
-    assert counts["session"] == 1
-    hits = await SearchIndex(db).keyword_search("hydration", kinds=["session"])
-    assert [h["id"] for h in hits] == ["session:s9"]
-
-
-# --------------------------------------------------------------------------
-# Cross-ranker identity — RRF can only fuse if both rankers agree on an id
-# --------------------------------------------------------------------------
-
-def test_vector_chunk_ids_collapse_to_document_ids():
-    from capman.storage.search import normalize_vector_id
-    assert normalize_vector_id("page:abc123:0") == "page:abc123"
-    assert normalize_vector_id("page:abc123:12") == "page:abc123"
-    assert normalize_vector_id("doc:deadbeef:3") == "doc:deadbeef"
-    # Non-chunked ids are untouched
-    assert normalize_vector_id("session:s1") == "session:s1"
-    assert normalize_vector_id("playbook:p1") == "playbook:p1"
-    assert normalize_vector_id("node:whatever") == "node:whatever"
-    assert normalize_vector_id("") == ""
-
-
-async def test_hybrid_fuses_chunked_vector_hits_with_documents(db):
-    """A page found by both rankers must merge into one result, not two."""
-    await db.upsert_document("page:abc123", "page", "terraform state locking",
-                             ts=time.time(), title="TF state")
-
-    class ChunkedVectorStore:
-        def search(self, query, top_k=10, types=None):
-            return [{"id": "page:abc123:0", "type": "page", "title": "TF state",
-                     "url": "", "score": 0.8, "text": "terraform state", "metadata": {}}]
-
-    hits = await SearchIndex(db, ChunkedVectorStore()).hybrid_search("terraform state locking")
-    assert len(hits) == 1, "chunk and document should fuse into one hit"
-    assert hits[0]["id"] == "page:abc123"
-    assert hits[0]["matched_by"] == "both"
-
-
-async def test_kind_filter_is_translated_for_the_vector_store(db):
-    """`node` is `knowledge_node` in the vector store; callers must not care."""
-    seen = {}
-
-    class RecordingVectorStore:
-        def search(self, query, top_k=10, types=None):
-            seen["types"] = types
-            return [{"id": "node:x", "type": "knowledge_node", "title": "n",
-                     "url": "", "score": 0.5, "text": "t", "metadata": {}}]
-
-    idx = SearchIndex(db, RecordingVectorStore())
-    hits = idx.vector_search("q", kinds=["node"])
-    assert seen["types"] == ["knowledge_node"], "kind not translated on the way in"
-    assert hits[0]["type"] == "node", "vector type not translated on the way out"

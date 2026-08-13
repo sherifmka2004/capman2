@@ -346,28 +346,35 @@ async def test_document_node_written_on_session_close(db, config, tmp_path):
 # Test: semantic search returns results after indexing
 # ---------------------------------------------------------------------------
 
-async def test_vector_search_after_indexing(tmp_path):
-    from capman.storage.vector import VectorStore
+async def test_semantic_search_after_indexing(tmp_path):
+    """End-to-end: documents in, embeddings built, semantic match out."""
+    from capman.storage.timeline import TimelineDB
+    from capman.storage.vectors import VectorIndex
 
-    vs = VectorStore(str(tmp_path / "chroma"))
-    vs.add_session_summary(
-        session_id="sess-1",
-        summary="User debugged React hydration mismatch. Found fix with suppressHydrationWarning.",
-    )
-    vs.add_knowledge_node(
-        node_id="node-1",
-        title="React Hydration Error",
-        text="React hydration fails when server HTML does not match client render.",
-    )
+    db = TimelineDB(str(tmp_path / "t.db"))
+    await db.migrate()
+    try:
+        await db.upsert_document(
+            "session:sess-1", "session",
+            "User debugged React hydration mismatch. Found fix with suppressHydrationWarning.",
+            ts=time.time(), title="React hydration debugging",
+        )
+        await db.upsert_document(
+            "node:node-1", "node",
+            "React hydration fails when server HTML does not match client render.",
+            ts=time.time(), title="React Hydration Error",
+        )
 
-    assert vs.count() == 2
+        index = VectorIndex(db)
+        assert await index.index_documents() == 2
+        assert await index.count() == 2
 
-    results = vs.search("how to fix react ssr hydration", top_k=5)
-    assert len(results) >= 1
-    titles = [r["title"] for r in results]
-    texts_combined = " ".join(r["text"] for r in results)
-    assert any("hydration" in t.lower() or "react" in t.lower() or "sess-1" in t.lower()
-               for t in titles + [texts_combined])
+        results = await index.search("how to fix react ssr hydration", limit=5)
+        assert len(results) >= 1
+        blob = " ".join(f"{r['title']} {r['text']}" for r in results).lower()
+        assert "hydration" in blob or "react" in blob
+    finally:
+        await db.close()
 
 
 # ---------------------------------------------------------------------------

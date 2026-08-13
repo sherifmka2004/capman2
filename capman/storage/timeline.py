@@ -21,9 +21,7 @@ from capman.events import (
 )
 
 
-from capman.storage.interfaces import TimelineDBAdapter
-
-class TimelineDB(TimelineDBAdapter):
+class TimelineDB:
     #: Buffered writes are flushed once either bound is hit.
     FLUSH_THRESHOLD = 200
     FLUSH_INTERVAL_S = 2.0

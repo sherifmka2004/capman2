@@ -386,5 +386,44 @@ def query(query_text, top_k):
     console.print()
 
 
+@cli.command()
+@click.option("--rebuild-index", is_flag=True,
+              help="Rebuild the ANN index from stored embeddings without re-embedding")
+def reindex(rebuild_index):
+    """Rebuild the search index: backfill documents, then embed what is missing.
+
+    Replaces the old top-level reindex.py script, which hardcoded paths and
+    silently used different chunk settings from the daemon.
+    """
+    from capman.storage.timeline import TimelineDB
+    from capman.storage.backfill import backfill_documents
+    from capman.storage.vectors import VectorIndex
+
+    config = load_config()
+
+    async def _run():
+        db = TimelineDB(config["storage"]["sqlite_path"])
+        await db.migrate()
+        try:
+            index = VectorIndex(db)
+            if rebuild_index:
+                n = await index.rebuild()
+                console.print(f"Rebuilt vector index from [cyan]{n}[/cyan] stored embeddings")
+                return
+
+            counts = await backfill_documents(db, config["storage"].get("knowledge_dir"))
+            console.print(f"Documents backfilled: [cyan]{counts}[/cyan]")
+            console.print("Embedding new documents…")
+            embedded = await index.index_documents()
+            console.print(
+                f"Embedded [cyan]{embedded}[/cyan] documents "
+                f"([dim]{await index.count()} total[/dim])"
+            )
+        finally:
+            await db.close()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     cli()

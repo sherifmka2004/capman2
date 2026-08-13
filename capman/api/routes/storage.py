@@ -93,8 +93,8 @@ def compute_storage(config: dict) -> dict:
     components = [
         {"name": "Timeline DB (SQLite)", "path": str(db_path), "bytes": db_bytes, "files": db_files,
          "human": _human(db_bytes)},
-        {"name": "Vector store (ChromaDB)", "path": str(chroma_path), "bytes": chroma_bytes, "files": chroma_files,
-         "human": _human(chroma_bytes)},
+        {"name": "Vector store (legacy ChromaDB — removable)", "path": str(chroma_path),
+         "bytes": chroma_bytes, "files": chroma_files, "human": _human(chroma_bytes)},
         {"name": "Screenshots", "path": str(screenshots_dir), "bytes": screenshots_bytes, "files": screenshots_files,
          "human": _human(screenshots_bytes)},
         {"name": "Knowledge graph (markdown)", "path": str(knowledge_dir), "bytes": knowledge_bytes, "files": knowledge_files,

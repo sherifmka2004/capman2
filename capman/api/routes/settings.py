@@ -66,6 +66,9 @@ async def get_settings(request: Request):
         or user_cfg.get("secrets", {}).get("openrouter_api_key")
     )
 
+    # Embeddings are now static model2vec weights bundled with the app;
+    # nothing is downloaded at first use. Kept reporting the legacy ONNX
+    # cache only so users can see (and delete) what Chroma left behind.
     onnx_cache = Path("~/.cache/chroma/onnx_models").expanduser()
     model_ready = onnx_cache.exists() and any(onnx_cache.iterdir())
 
