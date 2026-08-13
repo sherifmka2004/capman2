@@ -116,6 +116,8 @@ def compute_storage(config: dict) -> dict:
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
+        # Wait for the writer instead of raising `database is locked`.
+        conn.execute("PRAGMA busy_timeout=5000")
         for tbl in ("events", "sessions", "session_analyses", "knowledge_triples",
                     "screenshots", "playbooks", "knowledge_gaps"):
             try:

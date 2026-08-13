@@ -52,6 +52,7 @@ class PipelineRunner:
             remaining = await self._buffer.drain()
             for event in remaining:
                 await self._process_event(event)
+            await self._db.flush()
 
             # Flush current session
             session = self._detector.flush()
@@ -122,9 +123,15 @@ class PipelineRunner:
                 "full_chars_indexed": len(full),
             }
 
-        await self._db.insert_event(event)
+        # Resolve session membership BEFORE the write, so the row lands once
+        # with its session_id instead of being rewritten by assign_session_bulk.
+        completed, current = self._detector.ingest(event)
+        session_id = None
+        if current is not None and current.events and current.events[-1] is event:
+            session_id = current.id
 
-        completed, _ = self._detector.ingest(event)
+        await self._db.queue_event(event, session_id)
+
         if completed:
             await self._close_session(completed)
 
@@ -173,7 +180,10 @@ class PipelineRunner:
 
     async def _close_session(self, session: Session) -> None:
         """Persist session and schedule analysis."""
+        # Buffered events must hit disk before anything reads the session back.
+        await self._db.flush()
         await self._db.upsert_session(session)
+        # Membership is stamped at insert; this only repairs rows that missed it.
         await self._db.assign_session_bulk(
             [e.id for e in session.events], session.id
         )

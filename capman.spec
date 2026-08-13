@@ -129,7 +129,6 @@ elif sys.platform.startswith("linux"):
 
 datas = [
     ("config/*.toml", "config"),
-    ("capman/storage/schema.sql", "capman/storage"),
     ("capman/storage/migrations", "capman/storage/migrations"),
     ("capman/assets", "capman/assets"),
 ] + chroma_datas + ort_datas

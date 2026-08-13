@@ -234,7 +234,9 @@ async def _start_api_server(config: dict, db) -> None:
 
         await asyncio.gather(*servers, return_exceptions=True)
     except Exception as e:
-        logger.warning("API server failed to start: %s", e)
+        # A dead API means no web UI, no /query, no chat — never whisper about it.
+        logger.error("API server failed to start: %s", e, exc_info=True)
+        console.print(f"  [red]API server failed to start:[/red] {e}")
 
 
 @cli.command()
