@@ -246,3 +246,27 @@ class VectorStore(VectorStoreAdapter):
             return self._collection.count()
         except Exception:
             return 0
+
+
+# ----------------------------------------------------------------------
+# Process-wide instance cache
+# ----------------------------------------------------------------------
+_INSTANCES: dict[tuple[str, int, int], "VectorStore"] = {}
+
+
+def get_vector_store(chroma_path: str,
+                     chunk_chars: int = CHUNK_CHARS,
+                     chunk_overlap: int = CHUNK_OVERLAP) -> "VectorStore":
+    """Return a shared VectorStore for a path.
+
+    Constructing one per call is expensive in a way that is easy to miss: the
+    embedding function holds its ONNX InferenceSession and tokenizer as
+    per-instance cached properties, so each new store loads its own copy of the
+    model (~90 MB RSS). A single /chat/message request used to build four.
+    """
+    key = (str(Path(chroma_path).expanduser()), chunk_chars, chunk_overlap)
+    inst = _INSTANCES.get(key)
+    if inst is None:
+        inst = VectorStore(*key)
+        _INSTANCES[key] = inst
+    return inst

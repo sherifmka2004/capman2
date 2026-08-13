@@ -174,6 +174,65 @@ class TimelineDB(TimelineDBAdapter):
             self._pending = batch + self._pending
             raise
 
+    async def upsert_document(
+        self,
+        doc_id: str,
+        kind: str,
+        body: str,
+        *,
+        ts: float,
+        title: str = "",
+        uri: str = "",
+        ref_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Store a searchable unit of text.
+
+        SQLite owns the full text; the vector store holds only a derived
+        embedding. That is what makes the vector backend replaceable without a
+        data migration.
+        """
+        await self._db.execute(
+            """INSERT INTO documents (id, kind, ref_id, session_id, ts, title, uri, body)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   body = excluded.body, title = excluded.title, uri = excluded.uri,
+                   ts = excluded.ts, session_id = COALESCE(excluded.session_id, session_id)""",
+            (doc_id, kind, ref_id, session_id, ts, title, uri, body),
+        )
+        await self._db.commit()
+
+    async def upsert_documents_bulk(self, docs: list[dict]) -> int:
+        """Batch form of upsert_document. Returns the number written."""
+        if not docs:
+            return 0
+        await self._db.executemany(
+            """INSERT INTO documents (id, kind, ref_id, session_id, ts, title, uri, body)
+               VALUES (:id, :kind, :ref_id, :session_id, :ts, :title, :uri, :body)
+               ON CONFLICT(id) DO UPDATE SET
+                   body = excluded.body, title = excluded.title, uri = excluded.uri,
+                   ts = excluded.ts, session_id = COALESCE(excluded.session_id, session_id)""",
+            [
+                {
+                    "id": d["id"], "kind": d["kind"], "body": d["body"], "ts": d["ts"],
+                    "title": d.get("title", ""), "uri": d.get("uri", ""),
+                    "ref_id": d.get("ref_id"), "session_id": d.get("session_id"),
+                }
+                for d in docs
+            ],
+        )
+        await self._db.commit()
+        return len(docs)
+
+    async def document_count(self, kind: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM documents"
+        params: tuple = ()
+        if kind:
+            sql += " WHERE kind = ?"
+            params = (kind,)
+        async with self._db.execute(sql, params) as cur:
+            return (await cur.fetchone())[0]
+
     async def assign_session(self, event_id: str, session_id: str) -> None:
         await self._db.execute(
             "UPDATE events SET session_id = ? WHERE id = ?",

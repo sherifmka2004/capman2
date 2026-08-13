@@ -45,9 +45,9 @@ async def suggest_context(body: ContextRequest, request: Request):
     }
 
     try:
-        from capman.storage.vector import VectorStore
+        from capman.storage.vector import get_vector_store
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
+        vs = get_vector_store(chroma_path)
 
         # 1. Most relevant playbooks (the actionable methodologies)
         pb_hits = vs.search(body.task, top_k=body.top_k, types=["playbook"])

@@ -115,6 +115,17 @@ async def _run_daemon(config: dict) -> None:
     await db.migrate()
     logger.info("Storage initialized: %s", config["storage"]["sqlite_path"])
 
+    # Rebuild the keyword index from content captured before FTS existed.
+    # Idempotent and cheap once populated (~50ms on a week of data), so it is
+    # safe to run on every start rather than gating it behind a flag.
+    try:
+        from capman.storage.backfill import backfill_documents
+        counts = await backfill_documents(db, config["storage"].get("knowledge_dir"))
+        if any(counts.values()):
+            logger.info("Search index backfilled: %s", counts)
+    except Exception as e:
+        logger.warning("Search index backfill skipped: %s", e, exc_info=True)
+
     # Shared event queue
     queue: asyncio.Queue = asyncio.Queue(maxsize=10_000)
     buffer = AsyncEventBuffer.__new__(AsyncEventBuffer)

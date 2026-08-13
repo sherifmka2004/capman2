@@ -137,13 +137,27 @@ class PipelineRunner:
 
     async def _embed_page_text(self, url: str, title: str, text: str,
                                ts: float, headings: list) -> None:
-        """Push page text into the vector store for semantic retrieval."""
+        """Persist page text for keyword search, and embed it for semantic search."""
         if not text or not text.strip():
             return
+
+        # SQLite owns the full text. Previously it lived only in the vector
+        # store, with a 300-char excerpt in the event payload, so keyword
+        # search was impossible and the vector store could not be replaced
+        # without losing data.
         try:
-            from capman.storage.vector import VectorStore
+            import hashlib
+            doc_id = "page:" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+            await self._db.upsert_document(
+                doc_id, "page", text, ts=ts, title=title, uri=url,
+            )
+        except Exception as e:
+            logger.warning("Page document persist failed for %s: %s", url[:60], e)
+
+        try:
+            from capman.storage.vector import get_vector_store
             chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = VectorStore(chroma_path, self._chunk_chars, self._chunk_overlap)
+            vs = get_vector_store(chroma_path, self._chunk_chars, self._chunk_overlap)
             count = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: vs.add_page_text(url=url, title=title, text=text, ts=ts, headings=headings),
@@ -156,13 +170,26 @@ class PipelineRunner:
     async def _embed_doc_text(self, doc_path: str, doc_name: str, item_kind: str,
                               item_index: int, item_label: str, text: str,
                               ts: float, app: str) -> None:
-        """Embed read-document text into the vector store."""
+        """Persist read-document text for keyword search, and embed it."""
         if not text or not text.strip():
             return
+
         try:
-            from capman.storage.vector import VectorStore
+            import hashlib
+            key = f"{doc_path}|{item_kind}|{item_index}|{item_label}"
+            doc_id = "doc:" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+            await self._db.upsert_document(
+                doc_id, "doc", text, ts=ts,
+                title=f"{doc_name or doc_path} — {item_kind} {item_index}".strip(),
+                uri=doc_path,
+            )
+        except Exception as e:
+            logger.warning("Doc document persist failed for %s: %s", doc_path[:60], e)
+
+        try:
+            from capman.storage.vector import get_vector_store
             chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = VectorStore(chroma_path, self._chunk_chars, self._chunk_overlap)
+            vs = get_vector_store(chroma_path, self._chunk_chars, self._chunk_overlap)
             count = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: vs.add_doc_text(
@@ -257,6 +284,7 @@ class PipelineRunner:
             analyzer = SessionAnalyzer(self._config)
             analysis = await analyzer.analyze(enriched_session)
             await self._db.save_analysis(analysis)
+            await self._index_session_summary(analysis)
 
             # Save triples to DB and markdown
             if analysis.triples:
@@ -291,6 +319,42 @@ class PipelineRunner:
         except Exception as e:
             logger.error("Knowledge graph update failed: %s", e)
 
+    async def _index_session_summary(self, analysis) -> None:
+        """Make an analysed session searchable.
+
+        VectorStore.add_session_summary had no production caller, so the vector
+        store held zero `session` documents and /context/suggest's "similar past
+        sessions" was permanently empty. Index into both stores here.
+        """
+        parts = [analysis.problem_statement or "", analysis.approach_description or ""]
+        for attr in ("methodology_tags", "knowledge_applied", "knowledge_acquired"):
+            vals = getattr(analysis, attr, None) or []
+            if isinstance(vals, list):
+                parts.append(" ".join(str(v) for v in vals))
+        summary = "\n".join(p for p in parts if p and p.strip())
+        if not summary.strip():
+            return
+
+        try:
+            await self._db.upsert_document(
+                f"session:{analysis.session_id}", "session", summary,
+                ts=getattr(analysis, "analyzed_at", None) or time.time(),
+                title=(analysis.problem_statement or "")[:120],
+                ref_id=analysis.session_id, session_id=analysis.session_id,
+            )
+        except Exception as e:
+            logger.warning("Session summary persist failed for %s: %s", analysis.session_id, e)
+
+        try:
+            from capman.storage.vector import get_vector_store
+            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
+            vs = get_vector_store(chroma_path, self._chunk_chars, self._chunk_overlap)
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: vs.add_session_summary(analysis.session_id, summary)
+            )
+        except Exception as e:
+            logger.warning("Session summary embedding failed for %s: %s", analysis.session_id, e)
+
     async def _save_playbook(self, analysis) -> None:
         """Persist a troubleshooting playbook to DB, markdown, and vector store."""
         try:
@@ -298,6 +362,22 @@ class PipelineRunner:
             chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
 
             await self._db.save_playbook(analysis.playbook)
+
+            # Keyword-searchable independently of whether embedding succeeds.
+            pb = analysis.playbook
+            body = "\n".join(
+                str(p) for p in (
+                    [pb.title, pb.domain, pb.root_cause]
+                    + list(pb.symptoms or []) + list(pb.context_signals or [])
+                    + list(pb.fix or []) + list(pb.verification or [])
+                ) if p
+            )
+            if body.strip():
+                await self._db.upsert_document(
+                    f"playbook:{pb.id}", "playbook", body,
+                    ts=getattr(pb, "created_at", None) or time.time(),
+                    title=pb.title or "", ref_id=pb.id, session_id=analysis.session_id,
+                )
 
             from capman.knowledge.playbooks import save_playbook_markdown, index_playbook_in_vector_store
             from pathlib import Path

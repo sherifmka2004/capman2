@@ -46,9 +46,9 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 1. Vector search — semantically relevant sessions and nodes
     try:
-        from capman.storage.vector import VectorStore
+        from capman.storage.vector import get_vector_store
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
+        vs = get_vector_store(chroma_path)
         if vs.count() > 0:
             results = vs.search(question, top_k=int(_chat.get("vector_top_k", 5)))
             if results:
@@ -247,9 +247,9 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 6a-bis. Semantically relevant document content (slides/pages/sheets the user actually read)
     try:
-        from capman.storage.vector import VectorStore
+        from capman.storage.vector import get_vector_store
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
+        vs = get_vector_store(chroma_path)
         doc_hits = vs.search(question, top_k=int(_chat.get("doc_top_k", 6)), types=["doc"])
         if doc_hits:
             lines = []
@@ -276,9 +276,9 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 6b. Semantically relevant page chunks (vector search on embedded page text)
     try:
-        from capman.storage.vector import VectorStore
+        from capman.storage.vector import get_vector_store
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
+        vs = get_vector_store(chroma_path)
         page_hits = vs.search(question, top_k=int(_chat.get("page_top_k", 6)), types=["page"])
         if page_hits:
             lines = []
@@ -297,9 +297,9 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 6c. Most relevant troubleshooting playbooks (THE differentiator)
     try:
-        from capman.storage.vector import VectorStore
+        from capman.storage.vector import get_vector_store
         chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
+        vs = get_vector_store(chroma_path)
         pb_hits = vs.search(question, top_k=int(_chat.get("playbook_top_k", 3)), types=["playbook"])
         if pb_hits and db:
             lines = []
