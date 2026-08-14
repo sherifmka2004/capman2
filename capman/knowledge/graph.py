@@ -69,6 +69,50 @@ class KnowledgeGraph:
     # Mutation
     # ------------------------------------------------------------------
 
+    @property
+    def count(self) -> int:
+        """Number of nodes currently in the graph."""
+        return len(self.nodes)
+
+    def find_by_title(self, title: str) -> KnowledgeNode | None:
+        """Look a node up by title, case-insensitively.
+
+        Concept titles arrive from LLM output, where capitalisation is not
+        stable between runs — "React Hooks" and "react hooks" are the same
+        concept and must resolve to the same node.
+        """
+        target = (title or "").strip().lower()
+        if not target:
+            return None
+        for node in self.nodes.values():
+            if (node.title or "").strip().lower() == target:
+                return node
+        return None
+
+    def get_or_create_node(self, title: str, node_type: str = "concept",
+                           session_id: str = "") -> KnowledgeNode:
+        """Return the node for `title`, creating it if absent.
+
+        Identity is the slug of the title, so repeated mentions of a concept
+        converge on one node instead of accumulating near-duplicates.
+        """
+        node_id = _slug(title)
+        node = self.nodes.get(node_id)
+        if node is None:
+            node = KnowledgeNode(
+                id=node_id,
+                title=title,
+                node_type=node_type,
+                source_sessions=[session_id] if session_id else [],
+            )
+            self.nodes[node_id] = node
+            return node
+
+        node.last_updated = time.time()
+        if session_id and session_id not in node.source_sessions:
+            node.source_sessions.append(session_id)
+        return node
+
     def add_chain_of_thought(self, cot: ChainOfThought) -> None:
         """Upsert a concept node for each knowledge gap revealed in the CoT."""
         for gap_text in cot.knowledge_gaps_revealed:

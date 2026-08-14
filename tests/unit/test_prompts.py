@@ -65,11 +65,16 @@ def test_pass3_template_formats():
         methodology_tags='["docs-first"]',
         knowledge_acquired='["suppressHydrationWarning prop"]',
         methodology_pattern="search → docs → apply",
+        # Pass 3 is given the raw trail as well as the summary, so it can ground
+        # triples in specific error messages, commands and versions rather than
+        # only in the paraphrase produced by pass 1.
+        event_narrative="[+00:12] SHELL_COMMAND | Terminal | npm run dev",
     )
     assert "subject" in rendered
     assert "predicate" in rendered
     assert "confidence" in rendered
     assert "is_caused_by" in rendered
+    assert "npm run dev" in rendered
 
 
 # ---------------------------------------------------------------------------
