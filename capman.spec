@@ -11,11 +11,12 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
-# Collect chromadb including Rust native extensions
-chroma_datas, chroma_binaries, chroma_hidden = collect_all("chromadb")
-
-# Collect onnxruntime (used by chromadb for embeddings)
-ort_datas, ort_binaries, ort_hidden = collect_all("onnxruntime")
+# sqlite-vec ships one small loadable extension; model2vec needs its weights.
+# This replaced collect_all("chromadb") + collect_all("onnxruntime"), which
+# together pulled ~162MB (Rust bindings, ONNX runtime, kubernetes, grpc,
+# opentelemetry) and were the largest source of packaging breakage in this build.
+vec_datas, vec_binaries, vec_hidden = collect_all("sqlite_vec")
+m2v_datas, m2v_binaries, m2v_hidden = collect_all("model2vec")
 
 # All submodules that use dynamic import / pkgutil discovery
 sensor_hidden = collect_submodules("capman.sensors")
@@ -29,8 +30,8 @@ hiddenimports = (
     + pipeline_hidden
     + api_hidden
     + knowledge_hidden
-    + chroma_hidden
-    + ort_hidden
+    + vec_hidden
+    + m2v_hidden
     + [
         # uvicorn dynamic protocol selection
         "uvicorn",
@@ -129,15 +130,14 @@ elif sys.platform.startswith("linux"):
 
 datas = [
     ("config/*.toml", "config"),
-    ("capman/storage/schema.sql", "capman/storage"),
     ("capman/storage/migrations", "capman/storage/migrations"),
     ("capman/assets", "capman/assets"),
-] + chroma_datas + ort_datas
+] + vec_datas + m2v_datas
 
 a = Analysis(
     ["capman_desktop_entry.py"],
     pathex=["."],
-    binaries=chroma_binaries + ort_binaries,
+    binaries=vec_binaries + m2v_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=["hooks/"],

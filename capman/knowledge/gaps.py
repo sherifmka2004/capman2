@@ -60,7 +60,6 @@ async def update_gaps_from_analysis(db, analysis: SessionAnalysis) -> None:
             query_examples=[raw_concept] if raw_concept != concept else [],
             domain=analysis.chain_of_thought.problem_type if cot else "",
             lookup_count=1,
-            query_examples=[],
             sessions=[analysis.session_id],
             first_seen=now,
             last_seen=now,

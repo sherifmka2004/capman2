@@ -25,16 +25,23 @@ class ScreenshotSensor(BaseSensor):
         save_dir = Path(cfg.get("save_dir", "~/.capman/screenshots")).expanduser()
         max_disk_gb = cfg.get("max_disk_gb", 5.0)
 
+        loop = asyncio.get_event_loop()
+
         while not self._stop_event.is_set():
             try:
-                path = self._capture(save_dir, cfg)
+                # Grab + encode is 100-500ms of blocking work, and the disk-limit
+                # sweep stats every file under save_dir. Both would otherwise stall
+                # the event loop that also serves the API and the pipeline.
+                path = await loop.run_in_executor(None, self._capture, save_dir, cfg)
                 if path:
                     await self.emit(Event(
                         type=EventType.SCREENSHOT,
                         payload={"path": str(path), "trigger": "periodic", "ocr_text": ""},
                         sensor_id=self.sensor_id,
                     ))
-                    self._enforce_disk_limit(save_dir, max_disk_gb, cfg)
+                    await loop.run_in_executor(
+                        None, self._enforce_disk_limit, save_dir, max_disk_gb, cfg
+                    )
             except Exception as e:
                 logger.warning("Screenshot capture failed: %s", e)
 

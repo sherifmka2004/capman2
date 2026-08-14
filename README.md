@@ -177,7 +177,7 @@ When you navigate a PowerPoint, capman2 records every slide you visit, how long 
 
 On top of navigation, capman2 also captures the **text of the slides / pages /
 sheets you actually read** — gated by an attention policy so quick
-scroll-throughs are silently dropped. The full text is embedded into ChromaDB
+scroll-throughs are silently dropped. The full text is stored in `documents`
 (searchable from the chatbot, e.g. *"summarize what I read in that PDF
 yesterday"*); SQLite keeps a slim 300-char excerpt. Configurable: dwell
 threshold, per-doc cap, OCR vs. app-model extractor order — see
@@ -239,23 +239,39 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
               └──────────┬──────────────────────────────┘
                          │
                ┌─────────┴──────────────────────────────┐
-               │        Pluggable Storage Layer         │
-               │  [Local / Remote Adapters]             │
-               │  [Encryption-at-rest Decorator]        │
+               │      Hybrid Retrieval (RRF fusion)     │
+               │  BM25 (FTS5)  +  vectors (sqlite-vec)  │
                └─────────┬──────────────────────────────┘
                          │
               ┌──────────┴──────────────────────────────┐
               │                Stores                   │
-              │  SQLite    — raw event timeline          │
-              │  ChromaDB  — semantic vector index       │
-              │  Markdown  — Obsidian knowledge graph    │
+              │  SQLite   — events, documents, vectors,  │
+              │             FTS index  (one file)        │
+              │  Markdown — Obsidian knowledge graph     │
               └─────────────────────────────────────────┘
 ```
 
-### Pluggable Storage & Encryption
-capman2 now supports a modular storage architecture. You can configure it to use local storage (SQLite/ChromaDB) or plug in remote/dedicated backends. 
+### Storage & Privacy
 
-All storage operations can be optionally wrapped in an encryption-at-rest layer using AES-256 (`cryptography` library), ensuring that your sensitive cognitive workflows remain private even if stored in remote cloud services.
+Everything lives in **one SQLite file** (`~/.capman/timeline.db`): the event
+timeline, the searchable `documents` table, the FTS5 keyword index and the
+vector index (via [sqlite-vec](https://github.com/asg017/sqlite-vec)). The
+Obsidian markdown vault sits alongside it as the human-readable artifact.
+
+**capman2 never transmits your captured data off your machine.** Embeddings run
+locally from static weights bundled with the app — nothing is downloaded at
+first use. The only data that leaves is what you explicitly export (see
+[Exporting](#exporting-extracted-knowledge)) and, if you enable LLM analysis,
+session narratives sent to Anthropic or OpenRouter for the analysis passes.
+
+Data at rest is protected by your operating system's full-disk encryption —
+FileVault (macOS), BitLocker (Windows), LUKS (Linux). Enable it. capman2 does
+not add an application-level encryption layer: an earlier one existed, could
+never be switched on, and encrypted text *before* embedding it (which cannot
+work), so it was removed rather than left as a false assurance.
+
+**Growth is bounded.** The event timeline is pruned on a tiered policy — see
+[Retention](#retention).
 
 
 ### Session Detection
@@ -298,7 +314,7 @@ Every session produces:
 - **Knowledge edges** — typed relationships: `causes`, `requires`, `resolves`, `part_of`, `contradicts`
 - **Chain-of-thought records** — the full cognitive workflow as a reusable template
 
-Stored as human-readable markdown (`~/.capman/knowledge/`) and indexed in ChromaDB for semantic search.
+Stored as human-readable markdown (`~/.capman/knowledge/`) and indexed for hybrid keyword + semantic search.
 
 **Example node** (`~/.capman/knowledge/react-hydration-error.md`):
 ```markdown
@@ -438,7 +454,7 @@ capman storage
 #   Total: 8.1 MB  (298 files)
 #   Growth: ~1.4 MB/day  (~41.2 MB/month, over 5.9 days)
 #   ┌ Component ──────────────┬─ Size ──┬─ % ──┬ Files ┐
-#   │ Vector store (ChromaDB) │  6.4 MB │ 79%  │     6 │
+#   │ Timeline DB (SQLite)    │  6.4 MB │ 79%  │     3 │
 #   │ Timeline DB (SQLite)    │  1.3 MB │ 16%  │     3 │
 #   │ Screenshots             │   ...   │ ...  │   ... │
 #   └─────────────────────────┴─────────┴──────┴───────┘
@@ -480,22 +496,60 @@ Config is layered (each overrides the previous):
  
 ```toml
 [storage]
-# 'local' or 'remote' (pluggable adapters)
-mode = "local"
-# Optional AES-256 encryption-at-rest
-encryption_enabled = false
-encryption_key_env = "CAPMAN_MASTER_KEY"
+sqlite_path   = "~/.capman/timeline.db"
+knowledge_dir = "~/.capman/knowledge"
 
-[storage.local]
-vector_path = "~/.capman/chroma"
-timeline_path = "~/.capman/timeline.db"
+[storage.sharing]
+# The only path by which data leaves this machine. Allow-list, not deny-list.
+# Raw capture (page text, OCR, screenshots, keystrokes, clipboard, events) is
+# NOT exportable at any setting.
+allow_kinds       = ["playbook", "node", "session"]
+redact_by_default = true
+
+[storage.retention]
+enabled = true
+[storage.retention.ttl_days]     # 0 or omitted = keep forever
+dom_mutation = 7
+mouse_scroll = 14
+keystroke    = 30
 
 [sensors]
 enabled = ["window", "screenshot", "keyboard", "clipboard",
            "shell", "filesystem", "browser_relay", "documents"]
 ```
 
-The `[storage]` section now supports flexible configuration of local paths or remote backend credentials. If `encryption_enabled` is set to true, all data is encrypted locally before being passed to the storage adapter.
+### Retention
+
+The event timeline would otherwise grow unbounded — with the full desktop
+sensor set that is 10–20k events/day, roughly 1.5–2.5 GB/year. Retention is
+tiered **by event type**, not by age alone:
+
+- **Never pruned:** shell commands, URLs, searches, code diffs, file
+  operations, page and document text. This is what analysis and recall are
+  built from, and it is comparatively tiny. Listing one of these in
+  `ttl_days` is ignored.
+- **Expires:** high-volume, low-signal activity — DOM mutations, heatmap
+  ticks, scroll bursts, clicks, keystroke blocks, window focus churn.
+
+Per-session counts are rolled up before anything is deleted, so aggregate
+activity survives even when the raw rows do not, and any session that produced
+a playbook is protected outright.
+
+`GET /storage/retention` shows the policy, your current growth rate, and a
+dry-run preview of what would be pruned. Nothing is deleted by looking at it.
+
+### Exporting extracted knowledge
+
+```bash
+curl 'localhost:7331/export'                      # dry run — reports, returns nothing
+curl 'localhost:7331/export?dry_run=false'        # playbooks, nodes, session summaries
+curl 'localhost:7331/export/jsonl?since_days=30'  # newline-delimited JSON
+```
+
+Export is allow-list only: a kind nobody explicitly permitted is not
+exportable, so adding a new capture type can never silently widen what gets
+shared. Redaction (emails, home paths, IPs, credential-shaped strings) is on by
+default.
 
 
 ## Data Storage
@@ -504,7 +558,7 @@ The `[storage]` section now supports flexible configuration of local paths or re
 |-------|------|----------|
 | SQLite | `~/.capman/timeline.db` | Raw event log, sessions, analyses, triples |
 | Markdown | `~/.capman/knowledge/` | Obsidian-compatible knowledge graph nodes |
-| ChromaDB | `~/.capman/chroma/` | Semantic vector index for similarity search |
+| Vectors + FTS | `~/.capman/timeline.db` | Embeddings and keyword index, in the same file |
 | Screenshots | `~/.capman/screenshots/` | Timestamped PNGs with OCR text |
 
 All raw events are immutable — re-analysis is always possible without data loss.
@@ -581,9 +635,12 @@ capman2/
 │   │   ├── merger.py         # GraphMerger: merge triples, resolve conflicts
 │   │   └── markdown.py       # Obsidian-compatible serializer + document node writer
 │   ├── storage/
-│   │   ├── schema.sql        # SQLite DDL (version-controlled)
+│   │   ├── migrations/       # versioned SQL migrations (PRAGMA user_version)
 │   │   ├── timeline.py       # async SQLite adapter (events/sessions/analyses CRUD)
-│   │   └── vector.py         # ChromaDB adapter (embed + semantic search)
+│   │   ├── search.py         # hybrid BM25 + vector retrieval (RRF)
+│   │   ├── vectors.py        # sqlite-vec index + brute-force fallback
+│   │   ├── embedding.py      # model2vec static embeddings
+│   │   └── retention.py      # tiered pruning + compaction
 │   └── api/
 │       ├── server.py         # FastAPI app
 │       └── routes/

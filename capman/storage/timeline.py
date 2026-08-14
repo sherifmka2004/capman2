@@ -4,11 +4,15 @@ Append-only for events — analysis results and session metadata are updated in 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import dataclasses
+import logging
 from pathlib import Path
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 from capman.events import (
     Event, EventType, Session, SessionAnalysis, Triple,
@@ -17,71 +21,232 @@ from capman.events import (
 )
 
 
-from capman.storage.interfaces import TimelineDBAdapter
+class TimelineDB:
+    #: Buffered writes are flushed once either bound is hit.
+    FLUSH_THRESHOLD = 200
+    FLUSH_INTERVAL_S = 2.0
 
-class TimelineDB(TimelineDBAdapter):
     def __init__(self, db_path: str):
         self._path = str(Path(db_path).expanduser())
         self._db: aiosqlite.Connection | None = None
+        self._pending: list[tuple[Event, str | None]] = []
+        self._flush_timer: "asyncio.Task | None" = None
 
     async def connect(self) -> None:
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self._path)
         self._db.row_factory = aiosqlite.Row
+        # WAL + NORMAL is durable across app crashes and only risks the last
+        # transaction on power loss — the right trade for passive telemetry,
+        # and worth ~10-50x on this commit-heavy workload.
         await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
+        # Without this, the read-only connections in `capman storage` / reindex
+        # raise `database is locked` instead of waiting.
+        await self._db.execute("PRAGMA busy_timeout=5000")
         await self._db.execute("PRAGMA foreign_keys=ON")
+        await self._db.execute("PRAGMA temp_store=MEMORY")
+        await self._db.execute("PRAGMA cache_size=-32000")   # 32 MB
+        await self._db.execute("PRAGMA mmap_size=268435456")  # 256 MB
+
+    @staticmethod
+    def _migrations_dir() -> Path:
+        import sys as _sys
+        if getattr(_sys, "frozen", False):
+            return Path(_sys._MEIPASS) / "capman" / "storage" / "migrations"  # type: ignore[attr-defined]
+        return Path(__file__).parent / "migrations"
+
+    @classmethod
+    def _discover_migrations(cls) -> list[tuple[int, Path]]:
+        """Return [(version, path), ...] sorted by version, from NNN_name.sql files."""
+        found: list[tuple[int, Path]] = []
+        for path in cls._migrations_dir().glob("*.sql"):
+            prefix = path.name.split("_", 1)[0]
+            if not prefix.isdigit():
+                logger.warning("Skipping unversioned migration file: %s", path.name)
+                continue
+            found.append((int(prefix), path))
+        found.sort(key=lambda pair: pair[0])
+        return found
 
     async def migrate(self) -> None:
+        """Apply pending migrations, tracked by PRAGMA user_version.
+
+        user_version is used rather than a table because it is atomic, needs no
+        bootstrap, and is readable before any table exists. Migrations must be
+        idempotent (IF NOT EXISTS): a failure part-way leaves the version
+        unbumped, so the file is re-applied on next start.
+        """
         if self._db is None:
             await self.connect()
 
-        import sys as _sys
-        if getattr(_sys, "frozen", False):
-            _schema_path = Path(_sys._MEIPASS) / "capman" / "storage" / "schema.sql"  # type: ignore[attr-defined]
-        else:
-            _schema_path = Path(__file__).parent / "schema.sql"
-        schema_sql = _schema_path.read_text()
-        await self._db.executescript(schema_sql)
+        async with self._db.execute("PRAGMA user_version") as cur:
+            current = (await cur.fetchone())[0]
 
-        # Check if already versioned
-        async with self._db.execute("SELECT COUNT(*) FROM schema_version") as cur:
-            row = await cur.fetchone()
-            if row[0] == 0:
-                await self._db.execute("INSERT INTO schema_version VALUES (1)")
+        pending = [(v, p) for v, p in self._discover_migrations() if v > current]
+        if not pending:
+            return
 
+        for version, path in pending:
+            logger.info("Applying migration %03d (%s)", version, path.name)
+            try:
+                await self._db.executescript(path.read_text())
+                # PRAGMA cannot be parameterised; version is an int from the filename.
+                await self._db.execute(f"PRAGMA user_version = {version:d}")
+                await self._db.commit()
+            except Exception:
+                logger.exception("Migration %03d (%s) failed", version, path.name)
+                raise
+
+        # Legacy marker table — kept in sync for older readers, no longer authoritative.
+        latest = pending[-1][0]
+        await self._db.execute("DELETE FROM schema_version")
+        await self._db.execute("INSERT INTO schema_version VALUES (?)", (latest,))
+        await self._db.commit()
+        logger.info("Schema at version %d", latest)
+
+    _INSERT_EVENT_SQL = """INSERT OR IGNORE INTO events
+               (id, type, ts, app, window_title, payload, sensor_id, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+
+    @staticmethod
+    def _event_row(event: Event, session_id: str | None) -> tuple:
+        return (
+            event.id,
+            event.type.value,
+            event.ts,
+            event.app,
+            event.window_title,
+            json.dumps(event.payload),
+            event.sensor_id,
+            session_id,
+        )
+
+    async def insert_event(self, event: Event, session_id: str | None = None) -> None:
+        """Write one event immediately. Use queue_event() on the hot path."""
+        await self._db.execute(self._INSERT_EVENT_SQL, self._event_row(event, session_id))
         await self._db.commit()
 
-    async def insert_event(self, event: Event) -> None:
-        await self._db.execute(
-            """INSERT OR IGNORE INTO events
-               (id, type, ts, app, window_title, payload, sensor_id, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event.id,
-                event.type.value,
-                event.ts,
-                event.app,
-                event.window_title,
-                json.dumps(event.payload),
-                event.sensor_id,
-                None,
-            ),
+    async def insert_events_bulk(self, events: list[Event], session_id: str | None = None) -> None:
+        await self._db.executemany(
+            self._INSERT_EVENT_SQL,
+            [self._event_row(e, session_id) for e in events],
         )
         await self._db.commit()
 
-    async def insert_events_bulk(self, events: list[Event]) -> None:
-        rows = [
-            (e.id, e.type.value, e.ts, e.app, e.window_title,
-             json.dumps(e.payload), e.sensor_id, None)
-            for e in events
-        ]
+    async def queue_event(self, event: Event, session_id: str | None = None) -> None:
+        """Buffer an event for write-behind persistence.
+
+        The pipeline calls this once per event; committing per event cost one
+        fsync each and dominated the write amplification. Flushed on the
+        threshold, on the interval, and explicitly at session close / shutdown.
+        """
+        self._pending.append((event, session_id))
+        if len(self._pending) >= self.FLUSH_THRESHOLD:
+            await self.flush()
+        elif self._flush_timer is None or self._flush_timer.done():
+            self._flush_timer = asyncio.create_task(self._flush_after_interval())
+
+    async def _flush_after_interval(self) -> None:
+        try:
+            await asyncio.sleep(self.FLUSH_INTERVAL_S)
+            await self.flush()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Timed event flush failed")
+
+    async def flush(self) -> None:
+        """Persist buffered events. Safe to call when nothing is pending."""
+        if not self._pending:
+            return
+        batch, self._pending = self._pending, []
+        try:
+            await self._db.executemany(
+                self._INSERT_EVENT_SQL,
+                [self._event_row(e, sid) for e, sid in batch],
+            )
+            await self._db.commit()
+        except Exception:
+            # Put them back so the next flush retries rather than losing capture.
+            self._pending = batch + self._pending
+            raise
+
+    async def upsert_document(
+        self,
+        doc_id: str,
+        kind: str,
+        body: str,
+        *,
+        ts: float,
+        title: str = "",
+        uri: str = "",
+        ref_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Store a searchable unit of text.
+
+        SQLite owns the full text; the vector store holds only a derived
+        embedding. That is what makes the vector backend replaceable without a
+        data migration.
+        """
+        await self._db.execute(
+            """INSERT INTO documents (id, kind, ref_id, session_id, ts, title, uri, body)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   body = excluded.body, title = excluded.title, uri = excluded.uri,
+                   ts = excluded.ts, session_id = COALESCE(excluded.session_id, session_id)""",
+            (doc_id, kind, ref_id, session_id, ts, title, uri, body),
+        )
+        await self._db.commit()
+
+    async def upsert_documents_bulk(self, docs: list[dict]) -> int:
+        """Batch form of upsert_document. Returns the number written."""
+        if not docs:
+            return 0
         await self._db.executemany(
-            """INSERT OR IGNORE INTO events
-               (id, type, ts, app, window_title, payload, sensor_id, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO documents (id, kind, ref_id, session_id, ts, title, uri, body)
+               VALUES (:id, :kind, :ref_id, :session_id, :ts, :title, :uri, :body)
+               ON CONFLICT(id) DO UPDATE SET
+                   body = excluded.body, title = excluded.title, uri = excluded.uri,
+                   ts = excluded.ts, session_id = COALESCE(excluded.session_id, session_id)""",
+            [
+                {
+                    "id": d["id"], "kind": d["kind"], "body": d["body"], "ts": d["ts"],
+                    "title": d.get("title", ""), "uri": d.get("uri", ""),
+                    "ref_id": d.get("ref_id"), "session_id": d.get("session_id"),
+                }
+                for d in docs
+            ],
+        )
+        await self._db.commit()
+        return len(docs)
+
+    async def save_screenshots(self, rows: list[tuple]) -> None:
+        """Persist screenshot metadata + OCR text.
+
+        Rows are (id, event_id, path, ts, ocr_text, session_id).
+        """
+        if not rows:
+            return
+        await self._db.executemany(
+            """INSERT INTO screenshots (id, event_id, path, ts, ocr_text, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   ocr_text = excluded.ocr_text,
+                   session_id = COALESCE(excluded.session_id, session_id)""",
             rows,
         )
         await self._db.commit()
+
+    async def document_count(self, kind: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM documents"
+        params: tuple = ()
+        if kind:
+            sql += " WHERE kind = ?"
+            params = (kind,)
+        async with self._db.execute(sql, params) as cur:
+            return (await cur.fetchone())[0]
 
     async def assign_session(self, event_id: str, session_id: str) -> None:
         await self._db.execute(
@@ -91,9 +256,19 @@ class TimelineDB(TimelineDBAdapter):
         await self._db.commit()
 
     async def assign_session_bulk(self, event_ids: list[str], session_id: str) -> None:
-        await self._db.executemany(
-            "UPDATE events SET session_id = ? WHERE id = ?",
-            [(session_id, eid) for eid in event_ids],
+        """Repair path only.
+
+        The pipeline now stamps session_id at insert time; this used to rewrite
+        every row of a session a second time, which was the single largest
+        source of write amplification. Kept for backfill and for callers that
+        assign membership after the fact.
+        """
+        if not event_ids:
+            return
+        placeholders = ",".join("?" * len(event_ids))
+        await self._db.execute(
+            f"UPDATE events SET session_id = ? WHERE session_id IS NULL AND id IN ({placeholders})",
+            (session_id, *event_ids),
         )
         await self._db.commit()
 
@@ -166,37 +341,31 @@ class TimelineDB(TimelineDBAdapter):
         await self.upsert_triple(triple)
 
     async def upsert_triple(self, triple: Triple) -> None:
-        """Insert or increment observed_count when the same (subject, predicate, object) recurs."""
-        async with self._db.execute(
-            "SELECT id, observed_count FROM knowledge_triples "
-            "WHERE subject = ? AND predicate = ? AND object = ?",
-            (triple.subject, triple.predicate, triple.object),
-        ) as cur:
-            row = await cur.fetchone()
+        """Insert, or increment observed_count when the same (s, p, o) recurs.
 
-        if row:
-            await self._db.execute(
-                "UPDATE knowledge_triples SET observed_count = observed_count + 1, "
-                "last_observed = ?, confidence = MAX(confidence, ?) WHERE id = ?",
-                (triple.observed_at, triple.confidence, row["id"]),
-            )
-        else:
-            await self._db.execute(
-                """INSERT INTO knowledge_triples
+        Single statement against idx_triples_spo. The previous read-then-write
+        was a check-then-act race that could produce duplicate triples.
+        """
+        await self._db.execute(
+            """INSERT INTO knowledge_triples
                    (id, subject, predicate, object, confidence, observed_count,
                     first_seen, last_observed, source_session)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-                (
-                    triple.id,
-                    triple.subject,
-                    triple.predicate,
-                    triple.object,
-                    triple.confidence,
-                    triple.observed_at,
-                    triple.observed_at,
-                    triple.source_session,
-                ),
-            )
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+               ON CONFLICT(subject, predicate, object) DO UPDATE SET
+                   observed_count = observed_count + 1,
+                   last_observed  = excluded.last_observed,
+                   confidence     = MAX(confidence, excluded.confidence)""",
+            (
+                triple.id,
+                triple.subject,
+                triple.predicate,
+                triple.object,
+                triple.confidence,
+                triple.observed_at,
+                triple.observed_at,
+                triple.source_session,
+            ),
+        )
         await self._db.commit()
 
     async def save_playbook(self, pb: TroubleshootingPlaybook) -> None:
@@ -286,6 +455,7 @@ class TimelineDB(TimelineDBAdapter):
             return [dict(r) for r in await cur.fetchall()]
 
     async def get_events_since(self, since_ts: float, limit: int = 10000) -> list[Event]:
+        await self.flush()
         async with self._db.execute(
             "SELECT * FROM events WHERE ts >= ? ORDER BY ts LIMIT ?",
             (since_ts, limit),
@@ -294,6 +464,7 @@ class TimelineDB(TimelineDBAdapter):
         return [self._row_to_event(r) for r in rows]
 
     async def get_session_events(self, session_id: str) -> list[Event]:
+        await self.flush()
         async with self._db.execute(
             "SELECT * FROM events WHERE session_id = ? ORDER BY ts",
             (session_id,),
@@ -311,6 +482,7 @@ class TimelineDB(TimelineDBAdapter):
         return [dict(r) for r in rows]
 
     async def get_event_count(self) -> int:
+        await self.flush()
         async with self._db.execute("SELECT COUNT(*) FROM events") as cur:
             row = await cur.fetchone()
         return row[0]
@@ -352,7 +524,20 @@ class TimelineDB(TimelineDBAdapter):
             return None
 
     async def close(self) -> None:
+        if self._flush_timer and not self._flush_timer.done():
+            self._flush_timer.cancel()
         if self._db:
+            try:
+                await self.flush()
+            except Exception:
+                logger.exception("Final event flush failed")
+            try:
+                # Without an explicit checkpoint the WAL keeps growing and can
+                # end up holding the bulk of the data outside the main file.
+                await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                await self._db.execute("PRAGMA optimize")
+            except Exception:
+                logger.exception("WAL checkpoint on close failed")
             await self._db.close()
             self._db = None
 

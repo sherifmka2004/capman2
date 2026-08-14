@@ -37,6 +37,12 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
 
 
+def _index(db):
+    """Hybrid search index over the timeline database."""
+    from capman.storage.search import SearchIndex
+    return SearchIndex(db)
+
+
 async def _build_context(question: str, request: Request) -> str:
     """Pull relevant data from all stores to ground the LLM response."""
     config = request.app.state.config
@@ -46,18 +52,15 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 1. Vector search — semantically relevant sessions and nodes
     try:
-        from capman.storage.vector import VectorStore
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
-        if vs.count() > 0:
-            results = vs.search(question, top_k=int(_chat.get("vector_top_k", 5)))
-            if results:
-                lines = []
-                for r in results:
-                    lines.append(f"  [{r['score']:.2f}] ({r['type']}) {r['title']}: {r['text'][:200]}")
-                sections.append("## Semantically Relevant Knowledge\n" + "\n".join(lines))
+        results = await _index(db).hybrid_search(question, top_k=int(_chat.get("vector_top_k", 5)))
+        if results:
+            lines = []
+            for r in results:
+                lines.append(f"  [{r['score']:.3f}] ({r.get('type','')}) "
+                             f"{r.get('title','')}: {(r.get('text') or '')[:200]}")
+            sections.append("## Relevant Knowledge (keyword + semantic)\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Vector search skipped: %s", e)
+        logger.warning("Knowledge search skipped: %s", e)
 
     # 2. Recent session analyses
     if db:
@@ -247,64 +250,46 @@ async def _build_context(question: str, request: Request) -> str:
 
     # 6a-bis. Semantically relevant document content (slides/pages/sheets the user actually read)
     try:
-        from capman.storage.vector import VectorStore
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
-        doc_hits = vs.search(question, top_k=int(_chat.get("doc_top_k", 6)), types=["doc"])
+        doc_hits = await _index(db).hybrid_search(
+            question, kinds=["doc"], top_k=int(_chat.get("doc_top_k", 6)))
         if doc_hits:
             lines = []
             for h in doc_hits:
-                meta = h.get("metadata", {}) or {}
-                ts = meta.get("ts", 0)
-                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
-                doc_name = meta.get("doc_name", "") or meta.get("doc_path", "") or ""
-                kind = meta.get("item_kind", "")
-                idx = meta.get("item_index", "")
-                label = meta.get("item_label", "")
-                head = f"{doc_name} — {kind} {idx}".strip()
-                if label:
-                    head += f": {label}"
-                lines.append(f"  [{when}] [{h['score']:.2f}] {head}")
-                if meta.get("app"):
-                    lines.append(f"    App: {meta['app']}")
-                lines.append(f"    Excerpt: {h['text'][:800]}")
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(h["ts"])) if h.get("ts") else ""
+                lines.append(f"  [{when}] [{h['score']:.3f}] {h.get('title','')}")
+                if h.get("url"):
+                    lines.append(f"    Source: {h['url']}")
+                lines.append(f"    Excerpt: {(h.get('text') or '')[:800]}")
                 lines.append("")
             sections.append("## Relevant Document Content (slides / pages / sheets the user actually read)\n"
                             + "\n".join(lines))
     except Exception as e:
-        logger.debug("Doc semantic search skipped: %s", e)
+        logger.warning("Doc search skipped: %s", e)
 
     # 6b. Semantically relevant page chunks (vector search on embedded page text)
     try:
-        from capman.storage.vector import VectorStore
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
-        page_hits = vs.search(question, top_k=int(_chat.get("page_top_k", 6)), types=["page"])
+        page_hits = await _index(db).hybrid_search(
+            question, kinds=["page"], top_k=int(_chat.get("page_top_k", 6)))
         if page_hits:
             lines = []
             for h in page_hits:
-                ts = h["metadata"].get("ts", 0)
-                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
-                title = h.get("title", "")
-                url = h.get("url", "")
-                lines.append(f"  [{when}] [{h['score']:.2f}] {title}")
-                lines.append(f"    URL: {url}")
-                lines.append(f"    Excerpt: {h['text'][:800]}")
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(h["ts"])) if h.get("ts") else ""
+                lines.append(f"  [{when}] [{h['score']:.3f}] {h.get('title','')}")
+                lines.append(f"    URL: {h.get('url','')}")
+                lines.append(f"    Excerpt: {(h.get('text') or '')[:800]}")
                 lines.append("")
-            sections.append("## Relevant Page Content (semantic match)\n" + "\n".join(lines))
+            sections.append("## Relevant Page Content\n" + "\n".join(lines))
     except Exception as e:
-        logger.debug("Page semantic search skipped: %s", e)
+        logger.warning("Page search skipped: %s", e)
 
     # 6c. Most relevant troubleshooting playbooks (THE differentiator)
     try:
-        from capman.storage.vector import VectorStore
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
-        pb_hits = vs.search(question, top_k=int(_chat.get("playbook_top_k", 3)), types=["playbook"])
+        pb_hits = await _index(db).hybrid_search(
+            question, kinds=["playbook"], top_k=int(_chat.get("playbook_top_k", 3)))
         if pb_hits and db:
             lines = []
             for h in pb_hits:
-                pb_id = h["metadata"].get("playbook_id", "")
+                pb_id = h.get("ref_id") or (h.get("id") or "").split(":", 1)[-1]
                 if not pb_id:
                     continue
                 async with db._db.execute(
@@ -366,21 +351,28 @@ async def _build_context(question: str, request: Request) -> str:
                 for s, e in idle_intervals:
                     day = time.strftime("%Y-%m-%d", time.localtime(s))
                     idle_by_day[day] = idle_by_day.get(day, 0.0) + (e - s)
+                # Observed span per local day, in one grouped query rather than a
+                # per-day subquery in a loop. SQLite's 'localtime' modifier also
+                # handles DST correctly — the previous
+                # mktime(strptime(day, "%Y-%m-%d")) left tm_isdst = -1, so day
+                # boundaries drifted an hour across a transition and idle time
+                # was attributed to the wrong day.
+                async with db._db.execute(
+                    """SELECT date(ts, 'unixepoch', 'localtime') AS day,
+                              MIN(ts) AS lo, MAX(ts) AS hi
+                       FROM events WHERE ts > ?
+                       GROUP BY day ORDER BY day DESC LIMIT 7""",
+                    (since,),
+                ) as cur2:
+                    spans = {r["day"]: (r["lo"], r["hi"]) for r in await cur2.fetchall()}
+
                 lines = []
                 for day in sorted(idle_by_day.keys(), reverse=True)[:7]:
                     idle_h = idle_by_day[day] / 3600.0
                     # Active hours = time we observed *any* event between first
                     # and last event of that day, minus idle.
-                    async with db._db.execute(
-                        "SELECT MIN(ts) AS lo, MAX(ts) AS hi FROM events "
-                        "WHERE ts >= ? AND ts < ?",
-                        (
-                            time.mktime(time.strptime(day, "%Y-%m-%d")),
-                            time.mktime(time.strptime(day, "%Y-%m-%d")) + 86400,
-                        ),
-                    ) as cur2:
-                        span_row = await cur2.fetchone()
-                    span_h = ((span_row["hi"] or 0) - (span_row["lo"] or 0)) / 3600.0 if span_row else 0
+                    lo, hi = spans.get(day, (0, 0))
+                    span_h = ((hi or 0) - (lo or 0)) / 3600.0
                     active_h = max(0.0, span_h - idle_h)
                     lines.append(
                         f"  [{day}] active ≈ {active_h:.1f} h  |  idle ≈ {idle_h:.1f} h  "

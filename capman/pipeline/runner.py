@@ -39,6 +39,7 @@ class PipelineRunner:
         analysis_task = asyncio.create_task(self._analysis_loop())
         timeout_task = asyncio.create_task(self._timeout_checker())
         recategorize_task = asyncio.create_task(self._daily_recategorize_loop())
+        retention_task = asyncio.create_task(self._retention_loop())
 
         try:
             while not self._stop.is_set():
@@ -52,6 +53,7 @@ class PipelineRunner:
             remaining = await self._buffer.drain()
             for event in remaining:
                 await self._process_event(event)
+            await self._db.flush()
 
             # Flush current session
             session = self._detector.flush()
@@ -61,10 +63,12 @@ class PipelineRunner:
             analysis_task.cancel()
             timeout_task.cancel()
             recategorize_task.cancel()
+            retention_task.cancel()
             try:
                 await analysis_task
                 await timeout_task
                 await recategorize_task
+                await retention_task
             except asyncio.CancelledError:
                 pass
 
@@ -87,7 +91,7 @@ class PipelineRunner:
             except Exception:
                 pass
 
-        # Page text → embed full content into ChromaDB, store slim ref in SQLite
+        # Page text → persist full text as a searchable document, slim the payload
         if event.type == EventType.PAGE_TEXT:
             full = event.payload.get("excerpt", "") or ""
             asyncio.create_task(self._embed_page_text(
@@ -122,58 +126,66 @@ class PipelineRunner:
                 "full_chars_indexed": len(full),
             }
 
-        await self._db.insert_event(event)
+        # Resolve session membership BEFORE the write, so the row lands once
+        # with its session_id instead of being rewritten by assign_session_bulk.
+        completed, current = self._detector.ingest(event)
+        session_id = None
+        if current is not None and current.events and current.events[-1] is event:
+            session_id = current.id
 
-        completed, _ = self._detector.ingest(event)
+        await self._db.queue_event(event, session_id)
+
         if completed:
             await self._close_session(completed)
 
     async def _embed_page_text(self, url: str, title: str, text: str,
                                ts: float, headings: list) -> None:
-        """Push page text into the vector store for semantic retrieval."""
+        """Persist page text for keyword search, and embed it for semantic search."""
         if not text or not text.strip():
             return
+
+        # SQLite owns the full text. Previously it lived only in the vector
+        # store, with a 300-char excerpt in the event payload, so keyword
+        # search was impossible and the vector store could not be replaced
+        # without losing data.
         try:
-            from capman.storage.vector import VectorStore
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = VectorStore(chroma_path, self._chunk_chars, self._chunk_overlap)
-            count = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: vs.add_page_text(url=url, title=title, text=text, ts=ts, headings=headings),
+            import hashlib
+            doc_id = "page:" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+            await self._db.upsert_document(
+                doc_id, "page", text, ts=ts, title=title, uri=url,
             )
-            if count:
-                logger.info("Embedded page %s (%d chunks, %d chars)", url[:60], count, len(text))
         except Exception as e:
-            logger.debug("Page text embedding skipped: %s", e)
+            logger.warning("Page document persist failed for %s: %s", url[:60], e)
+
+        await self._embed_pending()
 
     async def _embed_doc_text(self, doc_path: str, doc_name: str, item_kind: str,
                               item_index: int, item_label: str, text: str,
                               ts: float, app: str) -> None:
-        """Embed read-document text into the vector store."""
+        """Persist read-document text for keyword search, and embed it."""
         if not text or not text.strip():
             return
+
         try:
-            from capman.storage.vector import VectorStore
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-            vs = VectorStore(chroma_path, self._chunk_chars, self._chunk_overlap)
-            count = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: vs.add_doc_text(
-                    doc_path=doc_path, doc_name=doc_name,
-                    item_kind=item_kind, item_index=item_index, item_label=item_label,
-                    text=text, ts=ts, app=app,
-                ),
+            import hashlib
+            key = f"{doc_path}|{item_kind}|{item_index}|{item_label}"
+            doc_id = "doc:" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+            await self._db.upsert_document(
+                doc_id, "doc", text, ts=ts,
+                title=f"{doc_name or doc_path} — {item_kind} {item_index}".strip(),
+                uri=doc_path,
             )
-            if count:
-                logger.info("Embedded %s %d of %s (%d chunks, %d chars)",
-                            item_kind, item_index, doc_name or doc_path or app,
-                            count, len(text))
         except Exception as e:
-            logger.debug("Doc text embedding skipped: %s", e)
+            logger.warning("Doc document persist failed for %s: %s", doc_path[:60], e)
+
+        await self._embed_pending()
 
     async def _close_session(self, session: Session) -> None:
         """Persist session and schedule analysis."""
+        # Buffered events must hit disk before anything reads the session back.
+        await self._db.flush()
         await self._db.upsert_session(session)
+        # Membership is stamped at insert; this only repairs rows that missed it.
         await self._db.assign_session_bulk(
             [e.id for e in session.events], session.id
         )
@@ -243,10 +255,12 @@ class PipelineRunner:
 
         try:
             enriched_session = self._enricher.enrich_session(session)
+            await self._persist_screenshots(enriched_session)
             from capman.pipeline.analyzer import SessionAnalyzer
             analyzer = SessionAnalyzer(self._config)
             analysis = await analyzer.analyze(enriched_session)
             await self._db.save_analysis(analysis)
+            await self._index_session_summary(analysis)
 
             # Save triples to DB and markdown
             if analysis.triples:
@@ -281,24 +295,114 @@ class PipelineRunner:
         except Exception as e:
             logger.error("Knowledge graph update failed: %s", e)
 
+    async def _embed_pending(self) -> None:
+        """Embed any documents that do not yet have a vector.
+
+        Static embeddings are fast enough (~200 texts in 2ms) to do inline
+        rather than in a fire-and-forget task whose failures nobody sees.
+        """
+        try:
+            from capman.storage.vectors import VectorIndex
+            await VectorIndex(self._db).index_documents(limit=64)
+        except Exception as e:
+            logger.warning("Embedding pending documents failed: %s", e)
+
+    async def _persist_screenshots(self, session: Session) -> None:
+        """Record screenshots and their OCR text.
+
+        Two long-standing gaps closed here. The `screenshots` table has existed
+        since the first commit and was never written to — three UIs rendered a
+        count that was always zero while the disk filled. And OCR text was only
+        ever mutated onto the in-memory Event, after its row had already been
+        written, so it was recomputed from the image every time and never
+        searchable.
+        """
+        from capman.events import EventType
+
+        rows, docs = [], []
+        for event in session.events:
+            if event.type != EventType.SCREENSHOT:
+                continue
+            path = event.payload.get("path", "")
+            if not path:
+                continue
+            ocr = event.payload.get("ocr_text", "") or ""
+            rows.append((event.id, event.id, path, event.ts, ocr, session.id))
+            if ocr.strip():
+                docs.append({
+                    "id": f"ocr:{event.id}", "kind": "ocr", "body": ocr, "ts": event.ts,
+                    "title": event.window_title or "", "uri": path,
+                    "ref_id": event.id, "session_id": session.id,
+                })
+
+        if not rows:
+            return
+        try:
+            await self._db.save_screenshots(rows)
+            if docs:
+                await self._db.upsert_documents_bulk(docs)
+            logger.info("Persisted %d screenshots (%d with OCR text) for session %s",
+                        len(rows), len(docs), session.id[:8])
+        except Exception as e:
+            logger.warning("Screenshot persist failed for session %s: %s", session.id, e)
+
+    async def _index_session_summary(self, analysis) -> None:
+        """Make an analysed session searchable.
+
+        VectorStore.add_session_summary had no production caller, so the vector
+        store held zero `session` documents and /context/suggest's "similar past
+        sessions" was permanently empty. Index into both stores here.
+        """
+        parts = [analysis.problem_statement or "", analysis.approach_description or ""]
+        for attr in ("methodology_tags", "knowledge_applied", "knowledge_acquired"):
+            vals = getattr(analysis, attr, None) or []
+            if isinstance(vals, list):
+                parts.append(" ".join(str(v) for v in vals))
+        summary = "\n".join(p for p in parts if p and p.strip())
+        if not summary.strip():
+            return
+
+        try:
+            await self._db.upsert_document(
+                f"session:{analysis.session_id}", "session", summary,
+                ts=getattr(analysis, "analyzed_at", None) or time.time(),
+                title=(analysis.problem_statement or "")[:120],
+                ref_id=analysis.session_id, session_id=analysis.session_id,
+            )
+        except Exception as e:
+            logger.warning("Session summary persist failed for %s: %s", analysis.session_id, e)
+
+        await self._embed_pending()
+
     async def _save_playbook(self, analysis) -> None:
         """Persist a troubleshooting playbook to DB, markdown, and vector store."""
         try:
             knowledge_dir = self._config.get("storage", {}).get("knowledge_dir", "~/.capman/knowledge")
-            chroma_path = self._config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
 
             await self._db.save_playbook(analysis.playbook)
 
-            from capman.knowledge.playbooks import save_playbook_markdown, index_playbook_in_vector_store
+            # Keyword-searchable independently of whether embedding succeeds.
+            pb = analysis.playbook
+            body = "\n".join(
+                str(p) for p in (
+                    [pb.title, pb.domain, pb.root_cause]
+                    + list(pb.symptoms or []) + list(pb.context_signals or [])
+                    + list(pb.fix or []) + list(pb.verification or [])
+                ) if p
+            )
+            if body.strip():
+                await self._db.upsert_document(
+                    f"playbook:{pb.id}", "playbook", body,
+                    ts=getattr(pb, "created_at", None) or time.time(),
+                    title=pb.title or "", ref_id=pb.id, session_id=analysis.session_id,
+                )
+
+            from capman.knowledge.playbooks import save_playbook_markdown
             from pathlib import Path
             path = save_playbook_markdown(analysis.playbook, Path(knowledge_dir).expanduser())
             logger.info("Playbook saved: %s", path)
 
-            # Index for /context/suggest semantic retrieval (off the loop)
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: index_playbook_in_vector_store(analysis.playbook, str(Path(chroma_path).expanduser())),
-            )
+            await self._embed_pending()
         except Exception as e:
             logger.error("Playbook save failed: %s", e)
 
@@ -337,6 +441,32 @@ class PipelineRunner:
                 except Exception as e:
                     logger.debug("Daily brain recategorization skipped: %s", e)
             await asyncio.sleep(3600)
+
+    async def _retention_loop(self) -> None:
+        """Prune expired low-signal events on a fixed interval.
+
+        Deliberately not run at startup: a first prune should not compete with
+        sensor initialisation, and nothing is urgent on a timeline that has
+        already been growing unbounded.
+        """
+        cfg = self._config.get("storage", {}).get("retention", {})
+        if not cfg.get("enabled", True):
+            logger.info("Retention disabled by config — event timeline will grow unbounded")
+            return
+
+        interval = max(1, int(cfg.get("check_interval_hours", 24))) * 3600
+        await asyncio.sleep(600)  # let startup settle
+
+        while True:
+            try:
+                from capman.storage.retention import prune_events
+                await self._db.flush()
+                deleted = await prune_events(self._db, self._config)
+                if deleted:
+                    logger.info("Retention removed %d events: %s", sum(deleted.values()), deleted)
+            except Exception as e:
+                logger.warning("Retention pass failed: %s", e, exc_info=True)
+            await asyncio.sleep(interval)
 
     def stop(self) -> None:
         self._stop.set()

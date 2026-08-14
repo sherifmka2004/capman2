@@ -69,26 +69,13 @@ def save_playbook_markdown(playbook: TroubleshootingPlaybook, knowledge_dir: Pat
     return path
 
 
-def index_playbook_in_vector_store(playbook: TroubleshootingPlaybook, chroma_path: str) -> None:
-    """Embed playbook text into ChromaDB for semantic retrieval."""
-    try:
-        from capman.storage.vector import VectorStore
+def index_playbook_in_vector_store(playbook: TroubleshootingPlaybook, chroma_path: str = "") -> None:
+    """Deprecated no-op, kept so older callers do not break.
 
-        vs = VectorStore(chroma_path)
-        text_parts = [playbook.title]
-        if playbook.symptoms:
-            text_parts.append("Symptoms: " + "; ".join(playbook.symptoms))
-        if playbook.root_cause:
-            text_parts.append("Root cause: " + playbook.root_cause)
-        if playbook.fix:
-            text_parts.append("Fix: " + "; ".join(playbook.fix))
-        for step in playbook.diagnostic_steps:
-            text_parts.append(f"Step {step.sequence}: {step.action}")
-
-        vs.add_knowledge_node(
-            node_id=f"playbook:{playbook.id}",
-            title=playbook.title,
-            text="\n".join(text_parts),
-        )
-    except Exception as e:
-        logger.error("Failed to index playbook %s in vector store: %s", playbook.id, e)
+    Playbooks are indexed by the pipeline writing them into the `documents`
+    table, which feeds both the BM25 and the vector ranker. The ChromaDB path
+    this used to take was removed along with capman.storage.vector; leaving the
+    import here would raise ImportError at runtime.
+    """
+    logger.debug("index_playbook_in_vector_store is a no-op; playbooks are "
+                 "indexed via the documents table (playbook %s)", playbook.id)

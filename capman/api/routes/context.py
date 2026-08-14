@@ -45,14 +45,13 @@ async def suggest_context(body: ContextRequest, request: Request):
     }
 
     try:
-        from capman.storage.vector import VectorStore
-        chroma_path = config.get("storage", {}).get("chroma_path", "~/.capman/chroma")
-        vs = VectorStore(chroma_path)
+        from capman.storage.search import SearchIndex
+        index = SearchIndex(db)
 
         # 1. Most relevant playbooks (the actionable methodologies)
-        pb_hits = vs.search(body.task, top_k=body.top_k, types=["playbook"])
+        pb_hits = await index.hybrid_search(body.task, kinds=["playbook"], top_k=body.top_k)
         for h in pb_hits:
-            pb_id = h["metadata"].get("playbook_id", "")
+            pb_id = h.get("ref_id") or (h.get("id") or "").split(":", 1)[-1]
             if not pb_id or not db:
                 continue
             async with db._db.execute(
@@ -75,9 +74,9 @@ async def suggest_context(body: ContextRequest, request: Request):
                 })
 
         # 2. Similar past sessions (workflow patterns)
-        sess_hits = vs.search(body.task, top_k=body.top_k, types=["session"])
+        sess_hits = await index.hybrid_search(body.task, kinds=["session"], top_k=body.top_k)
         for h in sess_hits:
-            sid = h["metadata"].get("session_id", "")
+            sid = h.get("session_id") or h.get("ref_id") or (h.get("id") or "").split(":", 1)[-1]
             if not sid or not db:
                 continue
             async with db._db.execute(
@@ -97,25 +96,25 @@ async def suggest_context(body: ContextRequest, request: Request):
                 })
 
         # 3. Related concept nodes
-        node_hits = vs.search(body.task, top_k=body.top_k, types=["knowledge_node"])
+        node_hits = await index.hybrid_search(body.task, kinds=["node"], top_k=body.top_k)
         for h in node_hits:
             out["related_concepts"].append({
-                "title": h["title"],
+                "title": h.get("title", ""),
                 "score": h["score"],
-                "summary": h["text"][:300],
+                "summary": (h.get("text") or "")[:300],
             })
 
         # 4. Page content excerpts you've read
-        page_hits = vs.search(body.task, top_k=body.top_k, types=["page"])
+        page_hits = await index.hybrid_search(body.task, kinds=["page"], top_k=body.top_k)
         for h in page_hits:
             out["page_excerpts"].append({
                 "url": h.get("url", ""),
                 "title": h.get("title", ""),
                 "score": h["score"],
-                "excerpt": h["text"][:600],
+                "excerpt": (h.get("text") or "")[:600],
             })
     except Exception as e:
-        logger.error("Vector retrieval failed: %s", e)
+        logger.error("Context retrieval failed: %s", e, exc_info=True)
 
     # 5. Active knowledge gaps that might be relevant
     if db:

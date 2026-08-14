@@ -614,7 +614,7 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
 
     <!-- Model status -->
     <div id="model-notice" style="display:none;background:#1a110a;border:1px solid #7c4a0044;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#f59e0b">
-      ⬇ Embedding model (~22 MB) will download on first use — ChromaDB fetches it automatically.
+      ⬇ Embeddings run locally from bundled static weights — nothing is downloaded.
     </div>
 
     <button onclick="saveSettings()" style="width:100%;background:#2563eb;border:none;color:#fff;border-radius:8px;padding:10px;font-size:14px;font-weight:600;cursor:pointer">Save Settings</button>

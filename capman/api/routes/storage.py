@@ -1,6 +1,7 @@
 """GET /storage — disk-usage breakdown for everything capman2 keeps on disk."""
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/storage", tags=["storage"])
 
 
@@ -91,8 +93,8 @@ def compute_storage(config: dict) -> dict:
     components = [
         {"name": "Timeline DB (SQLite)", "path": str(db_path), "bytes": db_bytes, "files": db_files,
          "human": _human(db_bytes)},
-        {"name": "Vector store (ChromaDB)", "path": str(chroma_path), "bytes": chroma_bytes, "files": chroma_files,
-         "human": _human(chroma_bytes)},
+        {"name": "Vector store (legacy ChromaDB — removable)", "path": str(chroma_path),
+         "bytes": chroma_bytes, "files": chroma_files, "human": _human(chroma_bytes)},
         {"name": "Screenshots", "path": str(screenshots_dir), "bytes": screenshots_bytes, "files": screenshots_files,
          "human": _human(screenshots_bytes)},
         {"name": "Knowledge graph (markdown)", "path": str(knowledge_dir), "bytes": knowledge_bytes, "files": knowledge_files,
@@ -116,6 +118,8 @@ def compute_storage(config: dict) -> dict:
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
+        # Wait for the writer instead of raising `database is locked`.
+        conn.execute("PRAGMA busy_timeout=5000")
         for tbl in ("events", "sessions", "session_analyses", "knowledge_triples",
                     "screenshots", "playbooks", "knowledge_gaps"):
             try:
@@ -167,3 +171,44 @@ def compute_storage(config: dict) -> dict:
 async def get_storage(request: Request):
     config = request.app.state.config or {}
     return compute_storage(config)
+
+
+@router.get("/retention")
+async def get_retention(request: Request):
+    """Current retention policy, what it would prune right now, and growth rate.
+
+    Always a dry run — nothing is deleted by looking at this.
+    """
+    config = request.app.state.config or {}
+    db = request.app.state.db
+    from capman.storage.retention import estimate_growth, prune_events, resolve_ttls
+
+    policy = resolve_ttls(config)
+    cfg = config.get("storage", {}).get("retention", {})
+    out: dict = {
+        "enabled": bool(cfg.get("enabled", True)),
+        "protect_analyzed_sessions": bool(cfg.get("protect_analyzed_sessions", True)),
+        "ttl_days": policy,
+        "check_interval_hours": int(cfg.get("check_interval_hours", 24)),
+    }
+    if db is None:
+        return out
+
+    try:
+        out["growth"] = await estimate_growth(db)
+        pending = await prune_events(db, config, dry_run=True)
+        out["would_prune"] = pending
+        out["would_prune_total"] = sum(pending.values())
+    except Exception as e:
+        logger.warning("Retention preview failed: %s", e)
+        out["error"] = str(e)
+
+    try:
+        async with db._db.execute(
+            "SELECT ran_at, type, deleted FROM retention_runs ORDER BY ran_at DESC LIMIT 20"
+        ) as cur:
+            out["recent_runs"] = [dict(r) for r in await cur.fetchall()]
+    except Exception:
+        out["recent_runs"] = []
+
+    return out
