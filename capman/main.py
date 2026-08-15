@@ -387,6 +387,144 @@ def query(query_text, top_k):
 
 
 @cli.command()
+@click.option("--to", "dest", default=None,
+              help="Destination directory (default: <data_dir>/backups)")
+@click.option("--include-screenshots", is_flag=True,
+              help="Include the screenshot tree — large, and the most sensitive thing capman holds")
+@click.option("--archive", is_flag=True, help="Write a .tar.gz instead of a directory")
+@click.option("--keep", type=int, default=0,
+              help="Delete all but the newest N backups in the destination (0 = keep all)")
+def backup(dest, include_screenshots, archive, keep):
+    """Take a consistent snapshot of the database and knowledge vault.
+
+    Safe to run while the daemon is capturing: the database is copied with
+    VACUUM INTO, which takes a read lock and produces a compacted, internally
+    consistent file rather than a torn copy of a live WAL database.
+    """
+    import json
+    import shutil
+    import sqlite3
+    import tarfile
+    import time as _time
+
+    config = load_config()
+    storage = config.get("storage", {})
+    data_dir = get_data_dir(config)
+
+    dest_dir = Path(dest).expanduser() if dest else data_dir / "backups"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _time.strftime("%Y%m%d-%H%M%S")
+    out = dest_dir / f"capman-backup-{stamp}"
+    out.mkdir(parents=True, exist_ok=True)
+
+    manifest: dict = {"created_at": _time.time(), "created_at_human": stamp, "contents": {}}
+
+    # --- database ---------------------------------------------------------
+    db_path = Path(str(storage.get("sqlite_path", "~/.capman/timeline.db"))).expanduser()
+    if db_path.exists():
+        target = out / "timeline.db"
+        try:
+            src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            src.execute("PRAGMA busy_timeout=10000")
+            src.execute("VACUUM INTO ?", (str(target),))
+            src.close()
+
+            check = sqlite3.connect(str(target))
+            integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+            version = check.execute("PRAGMA user_version").fetchone()[0]
+            counts = {}
+            for tbl in ("events", "sessions", "session_analyses", "documents",
+                        "playbooks", "knowledge_triples"):
+                try:
+                    counts[tbl] = check.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+                except sqlite3.Error:
+                    pass
+            check.close()
+
+            manifest["contents"]["timeline.db"] = {
+                "bytes": target.stat().st_size, "integrity_check": integrity,
+                "schema_version": version, "rows": counts,
+            }
+            colour = "green" if integrity == "ok" else "red"
+            console.print(f"  timeline.db     [{colour}]{integrity}[/{colour}]  "
+                          f"({target.stat().st_size / 1e6:.1f} MB, schema v{version})")
+        except Exception as e:
+            console.print(f"  [red]timeline.db failed: {e}[/red]")
+            manifest["contents"]["timeline.db"] = {"error": str(e)}
+    else:
+        console.print(f"  [yellow]no database at {db_path}[/yellow]")
+
+    # --- knowledge vault --------------------------------------------------
+    knowledge_dir = Path(str(storage.get("knowledge_dir", "~/.capman/knowledge"))).expanduser()
+    if knowledge_dir.is_dir():
+        shutil.copytree(knowledge_dir, out / "knowledge", dirs_exist_ok=True)
+        files = sum(1 for _ in (out / "knowledge").rglob("*") if _.is_file())
+        size = sum(f.stat().st_size for f in (out / "knowledge").rglob("*") if f.is_file())
+        manifest["contents"]["knowledge"] = {"files": files, "bytes": size}
+        console.print(f"  knowledge/      {files} files ({size / 1e6:.1f} MB)")
+
+    # --- config, minus secrets -------------------------------------------
+    user_config = data_dir / "config.toml"
+    if user_config.exists():
+        try:
+            import tomllib
+            import tomli_w
+            parsed = tomllib.loads(user_config.read_text(encoding="utf-8"))
+            # API keys live here in plaintext; a backup is exactly the artifact
+            # that ends up on a NAS or in an off-site copy, so they never go in.
+            removed = sorted(parsed.pop("secrets", {}).keys())
+            (out / "config.toml").write_text(tomli_w.dumps(parsed), encoding="utf-8")
+            manifest["contents"]["config.toml"] = {"secrets_stripped": removed}
+            note = f" ([dim]{len(removed)} secret(s) stripped[/dim])" if removed else ""
+            console.print(f"  config.toml     copied{note}")
+        except Exception as e:
+            console.print(f"  [yellow]config.toml skipped: {e}[/yellow]")
+
+    # --- screenshots (opt-in) --------------------------------------------
+    shots = Path(str(config.get("sensors", {}).get("screenshot", {})
+                     .get("save_dir", "~/.capman/screenshots"))).expanduser()
+    if include_screenshots and shots.is_dir():
+        shutil.copytree(shots, out / "screenshots", dirs_exist_ok=True)
+        size = sum(f.stat().st_size for f in (out / "screenshots").rglob("*") if f.is_file())
+        manifest["contents"]["screenshots"] = {"bytes": size}
+        console.print(f"  screenshots/    {size / 1e6:.1f} MB")
+    elif shots.is_dir():
+        console.print("  [dim]screenshots/    skipped (--include-screenshots to add)[/dim]")
+
+    manifest["restore"] = (
+        "Stop the daemon, then copy timeline.db and knowledge/ into the data "
+        "directory (default ~/.capman), or point [core] data_dir at this folder. "
+        "Secrets are not included — re-enter API keys in Settings."
+    )
+    (out / "MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    final = out
+    if archive:
+        tar_path = out.with_suffix(".tar.gz")
+        with tarfile.open(tar_path, "w:gz") as tf:
+            tf.add(out, arcname=out.name)
+        shutil.rmtree(out)
+        final = tar_path
+
+    total = (final.stat().st_size if final.is_file()
+             else sum(f.stat().st_size for f in final.rglob("*") if f.is_file()))
+    console.print(f"\n[green]Backup complete:[/green] {final}  [dim]({total / 1e6:.1f} MB)[/dim]")
+
+    # --- prune old backups ------------------------------------------------
+    if keep > 0:
+        existing = sorted(
+            [p for p in dest_dir.glob("capman-backup-*") if p != final],
+            key=lambda p: p.name, reverse=True,
+        )
+        for old in existing[max(keep - 1, 0):]:
+            shutil.rmtree(old) if old.is_dir() else old.unlink()
+            console.print(f"  [dim]pruned {old.name}[/dim]")
+
+    console.print("[dim]Note: up to ~2s of buffered events may not be included "
+                  "if the daemon is running.[/dim]")
+
+
+@cli.command()
 @click.option("--rebuild-index", is_flag=True,
               help="Rebuild the ANN index from stored embeddings without re-embedding")
 def reindex(rebuild_index):

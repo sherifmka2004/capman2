@@ -538,6 +538,63 @@ a playbook is protected outright.
 `GET /storage/retention` shows the policy, your current growth rate, and a
 dry-run preview of what would be pruned. Nothing is deleted by looking at it.
 
+### Backup
+
+```bash
+capman backup                                  # -> ~/.capman/backups/capman-backup-<stamp>/
+capman backup --to /mnt/backups --keep 7       # rotate, keeping the newest 7
+capman backup --archive                        # single .tar.gz
+capman backup --include-screenshots            # opt in to the screenshot tree
+```
+
+Safe to run while the daemon is capturing. The database is copied with
+`VACUUM INTO`, which takes a read lock and writes a compacted, internally
+consistent file — copying `timeline.db` by hand while WAL is active gives you a
+torn database instead. Every backup is verified with `PRAGMA integrity_check`
+and described by a `MANIFEST.json` (row counts, schema version, restore steps).
+
+**API keys are never included.** `~/.capman/config.toml` holds them in
+plaintext, and a backup is exactly the artifact that ends up on a NAS or
+off-site, so the `[secrets]` table is stripped and the removed keys are listed
+in the manifest. Screenshots are opt-in for the same reason.
+
+To restore: stop the daemon, copy `timeline.db` and `knowledge/` back into the
+data directory, and re-enter API keys in Settings.
+
+### Storing backups on your LAN (Proxmox, NAS, home server)
+
+> **Never point `[core] data_dir` at an NFS or SMB share.** SQLite's locking
+> relies on POSIX advisory locks that network filesystems implement
+> incompletely, and WAL mode is explicitly unsupported on them. The failure
+> mode is silent corruption, not an error. Keep the live database on local
+> disk and replicate the *backup*.
+
+The pattern that works: local capture, scheduled backup, pull to the server.
+
+```bash
+# on each laptop — hourly snapshot, keep a day's worth locally
+0 * * * * capman backup --keep 24
+
+# then replicate to the server (restic dedups and encrypts)
+restic -r sftp:backups@nas.lan:/tank/capman/$(hostname) backup ~/.capman/backups
+```
+
+A 1-core / 512 MB LXC on a dedicated ZFS dataset is sufficient; ZFS snapshots
+give you versioning for free and `zfs send` covers off-site. Budget ~25 GB per
+laptop (screenshots dominate, and are capped by `sensors.screenshot.max_disk_gb`).
+
+If you want an S3 API on the LAN instead — for Litestream, rclone, or other
+tools — MinIO or Garage in a container gives you one without the cloud. It is
+not required for the flow above.
+
+**One capman per machine.** Pointing several laptops at a single daemon does
+not work: display-dependent sensors must run where the display is, the session
+detector is a single state machine so two machines' events would interleave
+into incoherent sessions, and there is no `device_id` in the schema to
+attribute them afterwards. Keep one database per machine and back each up
+separately. (The shell hook and browser extension *can* target a remote
+daemon via `CAPMAN_API` — but aim them at one host's daemon, not a shared one.)
+
 ### Exporting extracted knowledge
 
 ```bash
