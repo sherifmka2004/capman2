@@ -1,0 +1,101 @@
+# capman2 — multi-user central storage stack
+#
+# Postgres (access-controlled core) + MinIO (S3 blobs) + Redis (hot buffers).
+# This is the reference architecture for turning capman2's per-machine local
+# SQLite capture into a CENTRAL, MULTI-USER, ACCESS-CONTROLLED store.
+#
+#   Browser ext / shell hook / daemon  ─CAPMAN_API→  gateway
+#        └──► Postgres (Row-Level Security, one user sees only their rows)
+#        └──► MinIO   (bucket-per-user, IAM-policy-gated screenshots/OCR/doc text)
+#        └──► Redis   (real-time session buffers, pub/sub, LLM-cache)
+#
+# Usage:  cp .env.example .env  &&  docker compose up -d
+# Bootstrap users:  ./bootstrap.sh add alice@example.com
+#
+# NOTE (mirrors the existing docs/STORAGE_WORKLOAD.md warning):
+#   The live capman capture path is write-heavy and must NOT live on this
+#   SQLite-over-NFS/SMB. The DB you see here is Postgres — the single source of
+#   truth that REPLACES timeline.db for multi-user. Keep raw capture local if
+#   you like, but this stack is the shared access-controlled store.
+
+name: capman2
+
+x-common: &common
+  restart: unless-stopped
+  networks: [capman]
+
+services:
+  # ─── Access-controlled relational core ──────────────────────────────────
+  postgres:
+    image: postgres:17
+    <<: *common
+    container_name: capman-postgres
+    environment:
+      POSTGRES_USER:        ${POSTGRES_ADMIN_USER:-capman_admin}
+      POSTGRES_PASSWORD:    ${POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB:          ${POSTGRES_DB:-capman}
+      # Apply /docker-entrypoint-initdb.d/*.sql on first boot ONLY.
+      # Sets up the capman schema, base roles, and Row-Level Security.
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-capman_admin} -d ${POSTGRES_DB:-capman}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # Never expose Postgres directly to the public internet. If remote access is
+    # required, terminate TLS at a reverse proxy, or SSH-tunnel, or run the
+    # gateway on the same private network. See the security note in README.md.
+
+  # ----------------------------------------------------------------------
+  # S3-compatible blob store — screenshots, OCR text, full doc content
+  # Buckets are created per user, and each user's IAM user is bound to their
+  # own bucket prefix. Sizing data is in docs/STORAGE_WORKLOAD.md.
+  minio:
+    image: minio/minio:latest
+    <<: *common
+    container_name: capman-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     ${MINIO_ROOT_USER:-capman_root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ----------------------------------------------------------------------
+  # Redis — hot buffers / pub-sub / cache ONLY. Not a durable primary store.
+  redis:
+    image: redis:7-alpine
+    <<: *common
+    container_name: capman-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}" ]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pg_data:
+  minio_data:
+  redis_data:
+
+networks:
+  capman:
+    driver: bridge

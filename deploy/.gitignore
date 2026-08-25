@@ -1,0 +1,4 @@
+# Secrets & provisioned credentials — never commit
+.env
+.provisioned-users.tsv
+.provisioned-minio.tsv
