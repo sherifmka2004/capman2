@@ -261,6 +261,7 @@ class PipelineRunner:
             analysis = await analyzer.analyze(enriched_session)
             await self._db.save_analysis(analysis)
             await self._index_session_summary(analysis)
+            await self._write_curated_session(analysis)
 
             # Save triples to DB and markdown
             if analysis.triples:
@@ -292,6 +293,10 @@ class PipelineRunner:
             if analysis.chain_of_thought:
                 graph.add_chain_of_thought(analysis.chain_of_thought)
             graph.save()
+            vault_dir = self._vault_dir()
+            if vault_dir:
+                from capman.knowledge.vault import CuratedKnowledgeVault
+                CuratedKnowledgeVault(vault_dir, redact=self._vault_redacts()).write_concepts(graph)
         except Exception as e:
             logger.error("Knowledge graph update failed: %s", e)
 
@@ -402,9 +407,34 @@ class PipelineRunner:
             path = save_playbook_markdown(analysis.playbook, Path(knowledge_dir).expanduser())
             logger.info("Playbook saved: %s", path)
 
+            vault_dir = self._vault_dir()
+            if vault_dir:
+                from capman.knowledge.vault import CuratedKnowledgeVault
+                CuratedKnowledgeVault(vault_dir, redact=self._vault_redacts()).write_playbook(pb)
+
             await self._embed_pending()
         except Exception as e:
             logger.error("Playbook save failed: %s", e)
+
+    def _vault_dir(self) -> str | None:
+        """Return the derived-vault destination only when the feature is enabled."""
+        cfg = self._config.get("knowledge", {}).get("vault", {})
+        if not cfg.get("enabled", True):
+            return None
+        return cfg.get("path") or self._config.get("storage", {}).get("derived_vault_dir")
+
+    def _vault_redacts(self) -> bool:
+        return bool(self._config.get("knowledge", {}).get("vault", {}).get("redact", True))
+
+    async def _write_curated_session(self, analysis) -> None:
+        vault_dir = self._vault_dir()
+        if not vault_dir:
+            return
+        try:
+            from capman.knowledge.vault import CuratedKnowledgeVault
+            CuratedKnowledgeVault(vault_dir, redact=self._vault_redacts()).write_session(analysis)
+        except Exception as e:
+            logger.warning("Curated session vault write failed for %s: %s", analysis.session_id, e)
 
     async def _update_knowledge_gaps(self, session, analysis) -> None:
         try:

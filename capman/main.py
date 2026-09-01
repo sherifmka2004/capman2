@@ -563,5 +563,76 @@ def reindex(rebuild_index):
     asyncio.run(_run())
 
 
+@cli.group("knowledge")
+def knowledge():
+    """Manage the portable, derived knowledge vault."""
+
+
+@knowledge.command("export")
+@click.option("--to", "destination", default=None,
+              help="Vault directory (default: [knowledge.vault].path)")
+@click.option("--no-redact", is_flag=True,
+              help="Keep derived text unchanged. Use only for a private local vault.")
+def export_knowledge(destination, no_redact):
+    """Rebuild the OKF-compatible vault from derived records only."""
+    from capman.knowledge.vault import export_derived_vault
+    config = load_config()
+    vault_cfg = config.get("knowledge", {}).get("vault", {})
+    target = Path(destination or vault_cfg.get("path") or config["storage"].get("derived_vault_dir", "~/.capman/vault")).expanduser()
+
+    async def _run():
+        from capman.storage.timeline import TimelineDB
+        db = TimelineDB(config["storage"]["sqlite_path"])
+        await db.migrate()
+        try:
+            return await export_derived_vault(
+                db, target, redact=not no_redact,
+                knowledge_dir=config["storage"].get("knowledge_dir"),
+            )
+        finally:
+            await db.close()
+
+    counts = asyncio.run(_run())
+    console.print(f"[green]Knowledge vault exported:[/green] {target}")
+    console.print("  " + " · ".join(f"{value} {name}" for name, value in counts.items()))
+    if no_redact:
+        console.print("[yellow]Warning:[/yellow] --no-redact may preserve identifiers in derived text.")
+
+
+@knowledge.command("qmd-setup")
+@click.option("--vault", "vault_path", default=None,
+              help="Existing vault directory (default: [knowledge.vault].path)")
+@click.option("--name", default="capman", show_default=True, help="qmd collection name")
+@click.option("--apply", "apply_changes", is_flag=True,
+              help="Create the qmd collection instead of printing the command")
+def setup_qmd(vault_path, name, apply_changes):
+    """Configure qmd as an optional local CLI/MCP reader for the derived vault."""
+    import shutil
+    import subprocess
+
+    config = load_config()
+    vault = Path(vault_path or config.get("knowledge", {}).get("vault", {}).get("path")
+                 or config["storage"].get("derived_vault_dir", "~/.capman/vault")).expanduser()
+    command = ["qmd", "collection", "add", str(vault), "--name", name]
+    shown = " ".join(repr(part) if " " in part else part for part in command)
+    if not apply_changes:
+        console.print("[bold]qmd setup is a preview; no qmd state was changed.[/bold]")
+        console.print(f"  {shown}")
+        console.print(f"  qmd context add qmd://{name} 'Capman derived, evidence-linked knowledge vault'")
+        console.print("  qmd embed")
+        console.print("\nRun again with [cyan]--apply[/cyan] to create the collection.")
+        return
+    if not vault.is_dir():
+        raise click.ClickException(f"Vault does not exist: {vault}. Run 'capman knowledge export' first.")
+    if not shutil.which("qmd"):
+        raise click.ClickException("qmd is not installed or not on PATH. Install @tobilu/qmd, then retry.")
+    completed = subprocess.run(command, check=False, text=True, capture_output=True)
+    if completed.returncode:
+        raise click.ClickException(completed.stderr.strip() or "qmd collection setup failed")
+    console.print(f"[green]qmd collection created:[/green] {name}")
+    console.print(f"Next: qmd context add qmd://{name} 'Capman derived, evidence-linked knowledge vault'")
+    console.print("Then: qmd embed")
+
+
 if __name__ == "__main__":
     cli()

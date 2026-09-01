@@ -167,6 +167,14 @@ sqlite_path = "~/.capman/timeline.db"
 chroma_path = "~/.capman/chroma"
 knowledge_dir = "~/.capman/knowledge"
 obsidian_vault = ""
+derived_vault_dir = "~/.capman/vault"
+
+[knowledge.vault]
+# A portable Markdown projection of derived knowledge only. It never receives
+# raw events, screenshots, page/document text, keyboard or clipboard capture.
+enabled = true
+path = "~/.capman/vault"
+redact = true
 
 [storage.sharing]
 # The ONLY path by which data leaves this machine. Allow-list, not deny-list:

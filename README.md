@@ -258,6 +258,24 @@ timeline, the searchable `documents` table, the FTS5 keyword index and the
 vector index (via [sqlite-vec](https://github.com/asg017/sqlite-vec)). The
 Obsidian markdown vault sits alongside it as the human-readable artifact.
 
+### Portable derived knowledge vault
+
+Capman can also maintain `~/.capman/vault`: an OKF-compatible Markdown vault
+containing only redacted, derived session summaries, concepts, and reusable
+playbooks. Every page links back to a stable `capman://` session or playbook
+reference; raw events, screenshots, page text, document text, keystrokes, and
+clipboard content are never written there.
+
+```bash
+# Rebuild the vault from durable derived records
+capman knowledge export
+
+# Preview optional local qmd CLI/MCP search integration
+capman knowledge qmd-setup
+# Create the qmd collection after reviewing the preview
+capman knowledge qmd-setup --apply
+```
+
 **capman2 never transmits your captured data off your machine.** Embeddings run
 locally from static weights bundled with the app — nothing is downloaded at
 first use. The only data that leaves is what you explicitly export (see

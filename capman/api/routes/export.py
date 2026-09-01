@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
+from capman.knowledge.privacy import redact_derived_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/export", tags=["export"])
@@ -35,26 +35,9 @@ EXPORTABLE_KINDS = ("playbook", "node", "session")
 #: reviewable and a future contributor has to argue with it in a diff.
 NEVER_EXPORTABLE = ("page", "doc", "ocr", "event", "screenshot", "keystroke", "clipboard")
 
-_REDACTIONS: tuple[tuple[re.Pattern, str], ...] = (
-    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[EMAIL]"),
-    # No \b before the slash: a space followed by "/" is not a word boundary
-    # (both are non-word characters), so an anchored \b never matches here.
-    (re.compile(r"(?:/Users|/home)/[^/\s]+"), "[HOME]"),
-    (re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+"), "[HOME]"),
-    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b"), "[IP]"),
-    (re.compile(r"(?i)\b(api[_-]?key|token|secret|password|passwd|bearer)\b\s*[:=]\s*\S+"),
-     r"\1=[REDACTED]"),
-    (re.compile(r"\b(?:sk|pk|ghp|gho|xox[baprs])-[A-Za-z0-9_\-]{10,}"), "[CREDENTIAL]"),
-)
-
-
 def redact(text: str) -> str:
     """Strip identifying and secret-shaped substrings."""
-    if not text:
-        return text
-    for pattern, replacement in _REDACTIONS:
-        text = pattern.sub(replacement, text)
-    return text
+    return redact_derived_text(text)
 
 
 def resolve_policy(config: dict) -> list[str]:
