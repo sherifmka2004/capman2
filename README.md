@@ -1,27 +1,45 @@
-# capman2 — Cognitive Workflow Capture Engine
+# capman2 — Your Work, Made Reusable
 
-> Clone a domain expert's knowledge — not just what they do, but **how they think**.
+> A private, evidence-led memory for the way you solve problems.
 
-Most knowledge management tools capture outputs: notes, bookmarks, saved articles. capman2 captures the **cognitive process itself**: the searches that failed before the one that worked, the docs skimmed vs. the ones read deeply, the commands run in sequence, the decision points where one approach was abandoned for another. That methodology — not the conclusion — is what makes an expert replicable.
+Most knowledge tools save outputs: notes, bookmarks, and articles. capman2 captures the useful trail behind your work: searches, documents, commands, decisions, and the sessions that eventually produced a reliable method. That evidence becomes searchable playbooks you can reuse in your next investigation.
+
+Your raw capture stays in your local workspace by default. Capman does not publish a Team Library or share personal activity until explicit roles, redaction, and review controls exist.
 
 ---
 
-## Quick Install (one command)
+## Start in five minutes
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/sherifmka2004/capman2/main/install.sh | bash
 ```
 
-Then:
+Then add an LLM key for automatic session analysis (capture works without one):
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-v1-...   # or ANTHROPIC_API_KEY
 capman start
 ```
 
-That's it. Open `http://localhost:7331` for the **chat UI**, or use the CLI (`capman query`, `capman status`).
+Open `http://localhost:7331`. The Personal workspace gives you:
 
-The installer handles `uv`, Python deps, the global `capman` command, and the daemon scaffolding. It auto-detects headless servers and disables display sensors.
+- **Home** — recent work, proven methods, and knowledge gaps that need attention.
+- **Ask Capman** — ask questions grounded in your captured sessions and linked evidence.
+- **Sessions** — inspect what happened and how a problem was solved.
+- **Playbooks** — reuse methods extracted from successful work.
+- **Knowledge** — browse gaps and the knowledge map.
+
+You can also use the CLI: `capman query`, `capman status`, `capman storage`, and `capman backup`.
+
+The installer handles `uv`, Python dependencies, the global `capman` command, and daemon scaffolding. It detects headless servers and disables display-dependent sensors.
+
+### Privacy at a glance
+
+Capture is local and private by default. Raw events, screenshots, page text,
+clipboard contents, and keystrokes are not written to the derived knowledge
+vault. LLM analysis sends session narratives only when you configure an LLM
+provider. Review [Storage & Privacy](#storage--privacy) before enabling sensors
+on a shared machine.
 
 ---
 
@@ -47,7 +65,7 @@ Grab the latest release from the [**Releases page**](https://github.com/sherifmk
 3. On first launch macOS may show *"capman2 cannot be opened because the developer cannot be verified"* — open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
 4. Grant **Accessibility** access when prompted (required for keyboard/mouse sensors): **System Settings → Privacy & Security → Accessibility** → enable capman2.
 5. The app icon appears in your **menu bar**. Your browser opens automatically at `http://localhost:7331`.
-6. Click the menu-bar icon → **Open Dashboard** → **Settings tab** → enter your API key and save.
+6. Click the menu-bar icon → **Open Dashboard** → **Settings** → enter your API key and save.
 
 ### Linux
 
@@ -75,10 +93,10 @@ The app icon appears in your system tray. Your browser opens at `http://localhos
 ### First-run setup (all platforms)
 
 1. Open the dashboard (browser auto-opens, or click tray icon → **Open Dashboard**).
-2. Go to the **⚙ Settings** tab.
+2. Go to **Settings**.
 3. Enter your **Anthropic API Key** (or OpenRouter API Key) and click **Save Settings**.
 4. Enable or disable sensors and adjust thresholds to your preference.
-5. Capture starts automatically — sessions appear in the **Sessions** tab after 60+ seconds of activity.
+5. Capture starts automatically — sessions appear in **Sessions** after 60+ seconds of activity.
 
 > **API key:** Get one at [console.anthropic.com](https://console.anthropic.com) (Claude Haiku is the primary model; costs are very low — typically <$1/day of heavy use).
 
@@ -251,7 +269,7 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
               └─────────────────────────────────────────┘
 ```
 
-### Storage & Privacy
+### Local storage boundary
 
 Everything lives in **one SQLite file** (`~/.capman/timeline.db`): the event
 timeline, the searchable `documents` table, the FTS5 keyword index and the
@@ -276,11 +294,11 @@ capman knowledge qmd-setup
 capman knowledge qmd-setup --apply
 ```
 
-**capman2 never transmits your captured data off your machine.** Embeddings run
-locally from static weights bundled with the app — nothing is downloaded at
-first use. The only data that leaves is what you explicitly export (see
+Embeddings run locally from static weights bundled with the app — nothing is
+downloaded at first use. Raw capture stays on your machine. The only data that
+leaves is what you explicitly export (see
 [Exporting](#exporting-extracted-knowledge)) and, if you enable LLM analysis,
-session narratives sent to Anthropic or OpenRouter for the analysis passes.
+the session narrative sent to Anthropic or OpenRouter for the analysis passes.
 
 Data at rest is protected by your operating system's full-disk encryption —
 FileVault (macOS), BitLocker (Windows), LUKS (Linux). Enable it. capman2 does
@@ -627,7 +645,7 @@ shared. Redaction (emails, home paths, IPs, credential-shaped strings) is on by
 default.
 
 
-## Data Storage
+## Storage & Privacy
 
 | Store | Path | Contents |
 |-------|------|----------|
@@ -721,8 +739,14 @@ capman2/
 │       └── routes/
 │           ├── events.py     # POST /events (browser extension ingestion)
 │           ├── sessions.py   # GET /sessions, /sessions/{id}
-│           ├── query.py      # GET /query?q=... (semantic search)
-│           └── knowledge.py  # GET /knowledge/nodes, /knowledge/graph
+│           ├── query.py      # GET /query and /query/events
+│           ├── knowledge.py  # nodes, triples, gaps, playbooks
+│           ├── chat.py       # POST /chat/message
+│           ├── context.py    # POST /context/suggest
+│           ├── storage.py    # usage and retention inspection
+│           ├── brain.py      # knowledge map and recategorization
+│           ├── export.py     # controlled derived-knowledge export
+│           └── settings.py   # local configuration and capture controls
 ├── browser-extension/
 │   ├── manifest.json         # MV3 (Chrome + Firefox compatible)
 │   ├── background.js         # tab lifecycle, URL capture, search detection
@@ -747,8 +771,11 @@ capman2/
 
 ```bash
 uv run pytest tests/ -v
-# 60 tests, ~0.5s
 ```
+
+The suite covers event and session models, sensor behavior, document reading,
+knowledge extraction and merging, storage, backup, retention, export privacy,
+and API routes.
 
 ---
 
