@@ -321,14 +321,15 @@ CHAT_HTML = """<!DOCTYPE html>
 
   /* ---------- Personal-first application shell ---------- */
   :root { color-scheme: dark; }
-  body { background: #0B0D10; color: #E6E9EE; display: block; min-height: 100vh; height: 100vh; overflow: hidden; }
+  html, body { height: 100%; }
+  body { background: #0B0D10; color: #E6E9EE; display: block; min-height: 0; overflow: hidden; }
   button, input, textarea { font: inherit; }
   button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
     outline: 2px solid #2962FF; outline-offset: 2px;
   }
   .skip-link { position: fixed; left: 12px; top: -48px; z-index: 300; background: #2962FF; color: #fff; padding: 10px 14px; border-radius: 6px; text-decoration: none; }
   .skip-link:focus { top: 12px; }
-  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 244px minmax(0, 1fr); }
+  .app-shell { height: 100vh; height: 100dvh; min-height: 0; display: grid; grid-template-columns: 244px minmax(0, 1fr); overflow: hidden; }
   .sidebar { background: #15181D; border-right: 1px solid #282E37; padding: 18px 12px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
   .brand { display: flex; align-items: center; gap: 9px; min-height: 32px; padding: 0 8px; font-size: 16px; font-weight: 700; letter-spacing: -.02em; color: #fff; }
   .brand-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: #2962FF; color: #fff; font-size: 12px; font-weight: 800; }
@@ -347,14 +348,14 @@ CHAT_HTML = """<!DOCTYPE html>
   .nav-count { min-width: 22px; padding: 1px 6px; text-align: center; border-radius: 10px; background: #282E37; color: #9AA4B2; font-size: 11px; font-variant-numeric: tabular-nums; }
   .nav-item.active .nav-count { background: #2962FF; color: #fff; }
   .sidebar-footer { margin-top: auto; border-top: 1px solid #282E37; padding-top: 12px; }
-  .workspace { min-width: 0; min-height: 100vh; display: flex; flex-direction: column; background: #0B0D10; }
-  .workspace-header { min-height: 68px; padding: 13px clamp(20px, 4vw, 48px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #282E37; background: #0B0D10; }
+  .workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #0B0D10; }
+  .workspace-header { min-height: 68px; padding: 13px clamp(20px, 4vw, 48px); display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; border-bottom: 1px solid #282E37; background: #0B0D10; }
   .workspace-header h1 { margin-top: 2px; color: #fff; font-size: 20px; line-height: 1.2; letter-spacing: -.025em; }
   .connection { display: inline-flex; align-items: center; gap: 7px; color: #9AA4B2; font-size: 12px; }
   .connection::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .connection.is-online { color: #00B894; }
   .view { min-height: 0; }
-  .home-content { overflow-y: auto; padding: clamp(20px, 4vw, 48px); max-width: 1200px; width: 100%; margin: 0 auto; }
+  .home-content { flex: 1; min-height: 0; overflow-y: auto; padding: clamp(20px, 4vw, 48px); max-width: 1200px; width: 100%; margin: 0 auto; }
   .home-intro { display: flex; justify-content: space-between; gap: 24px; align-items: end; padding-bottom: 30px; border-bottom: 1px solid #282E37; }
   .home-intro h2 { max-width: 620px; margin-top: 7px; color: #fff; font-size: clamp(24px, 3vw, 34px); line-height: 1.13; letter-spacing: -.04em; }
   .home-intro p { max-width: 570px; margin-top: 11px; color: #9AA4B2; font-size: 14px; line-height: 1.55; }
@@ -384,7 +385,7 @@ CHAT_HTML = """<!DOCTYPE html>
   .modal { background: #1E232A; border-color: #303844; }
   @media (max-width: 760px) {
     body { overflow: auto; }
-    .app-shell { display: block; }
+    .app-shell { display: block; height: auto; min-height: 100vh; min-height: 100dvh; overflow: visible; }
     .sidebar { position: sticky; top: 0; z-index: 10; min-height: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid #282E37; }
     .brand, .scope-card, .nav-label, .sidebar-footer { display: none; }
     .sidebar-nav { flex-direction: row; overflow-x: auto; gap: 6px; }
