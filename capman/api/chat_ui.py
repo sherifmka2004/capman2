@@ -292,6 +292,7 @@ CHAT_HTML = """<!DOCTYPE html>
     flex: 1; overflow: hidden; display: flex; flex-direction: column;
     background: radial-gradient(ellipse at 45% 45%, #0e0b1e 0%, #060409 55%, #020204 100%);
   }
+  #view-brain.hidden { display: none; }
   .brain-wrap { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
   .brain-hdr {
     display: flex; align-items: center; padding: 10px 20px; flex-shrink: 0;
@@ -317,34 +318,150 @@ CHAT_HTML = """<!DOCTYPE html>
   @keyframes connFlow     { to{stroke-dashoffset:-20} }
   @keyframes labelIn      { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
   @keyframes ringPulse    { 0%{r:10;opacity:.7} 100%{r:30;opacity:0} }
+
+  /* ---------- Personal-first application shell ---------- */
+  :root { color-scheme: dark; }
+  body { background: #0B0D10; color: #E6E9EE; display: block; min-height: 100vh; height: 100vh; overflow: hidden; }
+  button, input, textarea { font: inherit; }
+  button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 2px solid #2962FF; outline-offset: 2px;
+  }
+  .skip-link { position: fixed; left: 12px; top: -48px; z-index: 300; background: #2962FF; color: #fff; padding: 10px 14px; border-radius: 6px; text-decoration: none; }
+  .skip-link:focus { top: 12px; }
+  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 244px minmax(0, 1fr); }
+  .sidebar { background: #15181D; border-right: 1px solid #282E37; padding: 18px 12px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+  .brand { display: flex; align-items: center; gap: 9px; min-height: 32px; padding: 0 8px; font-size: 16px; font-weight: 700; letter-spacing: -.02em; color: #fff; }
+  .brand-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: #2962FF; color: #fff; font-size: 12px; font-weight: 800; }
+  .scope-card { padding: 10px; border: 1px solid #303844; background: #1E232A; border-radius: 8px; }
+  .scope-label, .nav-label, .section-kicker { color: #9AA4B2; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+  .scope-current { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; color: #fff; font-size: 13px; font-weight: 650; }
+  .scope-private { display: block; margin-top: 3px; color: #9AA4B2; font-size: 11px; }
+  .team-boundary { margin-top: 10px; padding-top: 10px; border-top: 1px solid #303844; }
+  .team-boundary button { appearance: none; width: 100%; text-align: left; border: 0; background: transparent; padding: 0; color: #7D8795; font-size: 12px; cursor: not-allowed; }
+  .team-boundary small { display: block; margin-top: 4px; color: #677181; font-size: 10px; line-height: 1.4; }
+  .sidebar-nav { display: flex; flex-direction: column; gap: 3px; }
+  .nav-label { padding: 0 8px; margin: 4px 0 5px; }
+  .nav-item { width: 100%; min-height: 40px; padding: 8px; border: 1px solid transparent; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: transparent; color: #BAC2CD; cursor: pointer; text-align: left; font-size: 13px; transition: background .14s ease, color .14s ease, border-color .14s ease; }
+  .nav-item:hover { color: #fff; background: #20252D; }
+  .nav-item.active { color: #fff; background: #223357; border-color: #2D519D; }
+  .nav-count { min-width: 22px; padding: 1px 6px; text-align: center; border-radius: 10px; background: #282E37; color: #9AA4B2; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .nav-item.active .nav-count { background: #2962FF; color: #fff; }
+  .sidebar-footer { margin-top: auto; border-top: 1px solid #282E37; padding-top: 12px; }
+  .workspace { min-width: 0; min-height: 100vh; display: flex; flex-direction: column; background: #0B0D10; }
+  .workspace-header { min-height: 68px; padding: 13px clamp(20px, 4vw, 48px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #282E37; background: #0B0D10; }
+  .workspace-header h1 { margin-top: 2px; color: #fff; font-size: 20px; line-height: 1.2; letter-spacing: -.025em; }
+  .connection { display: inline-flex; align-items: center; gap: 7px; color: #9AA4B2; font-size: 12px; }
+  .connection::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .connection.is-online { color: #00B894; }
+  .view { min-height: 0; }
+  .home-content { overflow-y: auto; padding: clamp(20px, 4vw, 48px); max-width: 1200px; width: 100%; margin: 0 auto; }
+  .home-intro { display: flex; justify-content: space-between; gap: 24px; align-items: end; padding-bottom: 30px; border-bottom: 1px solid #282E37; }
+  .home-intro h2 { max-width: 620px; margin-top: 7px; color: #fff; font-size: clamp(24px, 3vw, 34px); line-height: 1.13; letter-spacing: -.04em; }
+  .home-intro p { max-width: 570px; margin-top: 11px; color: #9AA4B2; font-size: 14px; line-height: 1.55; }
+  .button-primary { border: 1px solid #3D73FF; border-radius: 7px; background: #2962FF; color: #fff; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; transition: background .14s ease, transform .14s ease; }
+  .button-primary:hover { background: #3D73FF; }
+  .button-primary:active { transform: translateY(1px); }
+  .home-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(270px, .65fr); gap: 38px; padding-top: 30px; }
+  .home-section { min-width: 0; }
+  .home-section + .home-section { margin-top: 30px; }
+  .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .section-heading h3 { color: #fff; font-size: 14px; letter-spacing: -.01em; }
+  .text-button { appearance: none; border: 0; background: transparent; color: #87A8FF; padding: 6px 0; cursor: pointer; font-size: 12px; }
+  .text-button:hover { color: #B7CAFF; text-decoration: underline; }
+  .evidence-list { border-top: 1px solid #303844; }
+  .evidence-row { width: 100%; min-height: 69px; padding: 13px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; border: 0; border-bottom: 1px solid #303844; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+  .evidence-row:hover .evidence-title { color: #AFC5FF; }
+  .evidence-title { display: block; overflow: hidden; color: #E6E9EE; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .evidence-meta { display: block; overflow: hidden; margin-top: 4px; color: #9AA4B2; font-size: 11px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+  .evidence-trailing { color: #9AA4B2; font-size: 11px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .attention-panel { padding: 16px; border: 1px solid #3E3523; border-radius: 8px; background: #211C14; }
+  .attention-panel h3 { color: #F7C36B; font-size: 13px; }
+  .attention-panel p { margin-top: 7px; color: #C6B89B; font-size: 12px; line-height: 1.5; }
+  .home-empty { padding: 20px 0; color: #9AA4B2; font-size: 13px; line-height: 1.55; }
+  .home-error { color: #F28B8B; }
+  .ctx-card { border: 1px solid #303844; border-left: 1px solid #303844; border-radius: 7px; background: #1E232A; }
+  .modal-overlay { background: rgba(4, 6, 8, .78); }
+  .modal { background: #1E232A; border-color: #303844; }
+  @media (max-width: 760px) {
+    body { overflow: auto; }
+    .app-shell { display: block; }
+    .sidebar { position: sticky; top: 0; z-index: 10; min-height: auto; padding: 10px 12px; border-right: 0; border-bottom: 1px solid #282E37; }
+    .brand, .scope-card, .nav-label, .sidebar-footer { display: none; }
+    .sidebar-nav { flex-direction: row; overflow-x: auto; gap: 6px; }
+    .nav-item { flex: 0 0 auto; width: auto; min-height: 40px; padding: 8px 11px; }
+    .workspace { min-height: calc(100vh - 62px); }
+    .workspace-header { min-height: 62px; padding: 12px 20px; }
+    .home-intro { display: block; padding-bottom: 24px; }
+    .home-intro .button-primary { margin-top: 18px; width: 100%; min-height: 44px; }
+    .home-grid { grid-template-columns: 1fr; gap: 24px; padding-top: 24px; }
+    .home-section + .home-section { margin-top: 24px; }
+    .connection { font-size: 0; }
+    .connection::before { width: 9px; height: 9px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to workspace</a>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Primary navigation">
+    <div class="brand"><span class="brand-mark">C</span> Capman</div>
+    <div class="scope-card">
+      <div class="scope-label">Current scope</div>
+      <div class="scope-current"><span>Personal</span><span aria-hidden="true">Private</span></div>
+      <span class="scope-private">Your captured work stays here.</span>
+      <div class="team-boundary">
+        <button type="button" disabled title="Team Library needs roles, publish review, and redaction controls first.">Team Library — unavailable</button>
+        <small>Sharing is intentionally disabled until privacy controls exist.</small>
+      </div>
+    </div>
+    <nav class="sidebar-nav" aria-label="Personal workspace">
+      <div class="nav-label">Workspace</div>
+      <button type="button" class="nav-item active" data-view="home" aria-current="page"><span>Home</span></button>
+      <button type="button" class="nav-item" data-view="chat"><span>Ask Capman</span></button>
+      <button type="button" class="nav-item" data-view="sessions"><span>Sessions</span><span class="nav-count" id="count-sessions">0</span></button>
+      <button type="button" class="nav-item" data-view="playbooks"><span>Playbooks</span><span class="nav-count" id="count-playbooks">0</span></button>
+      <div class="nav-label">Knowledge</div>
+      <button type="button" class="nav-item" data-view="gaps"><span>Knowledge gaps</span><span class="nav-count" id="count-gaps">0</span></button>
+      <button type="button" class="nav-item" data-view="brain"><span>Knowledge map</span></button>
+      <button type="button" class="nav-item" data-view="context"><span>Prepare a task</span></button>
+    </nav>
+    <div class="sidebar-footer">
+      <button type="button" class="nav-item" data-view="storage"><span>Storage</span><span class="nav-count" id="count-storage">—</span></button>
+      <button type="button" class="nav-item" data-view="settings"><span>Settings</span></button>
+    </div>
+  </aside>
+  <main class="workspace" id="main-content">
+    <header class="workspace-header">
+      <div><div class="section-kicker">Personal workspace</div><h1 id="page-title">Today</h1></div>
+      <div class="connection" id="status" aria-live="polite">Connecting</div>
+    </header>
 
-<header>
-  <h1>capman2 — Cognitive Capture Engine</h1>
-  <div class="badge" id="status">connecting...</div>
-</header>
-
-<div class="tabs">
-  <div class="tab active" data-view="chat">💬 Chat</div>
-  <div class="tab" data-view="playbooks">📘 Playbooks <span class="tab-count" id="count-playbooks">0</span></div>
-  <div class="tab" data-view="gaps">🎯 Knowledge Gaps <span class="tab-count" id="count-gaps">0</span></div>
-  <div class="tab" data-view="sessions">📅 Sessions <span class="tab-count" id="count-sessions">0</span></div>
-  <div class="tab" data-view="storage">💾 Storage <span class="tab-count" id="count-storage">—</span></div>
-  <div class="tab" data-view="context">⚡ Context Suggest</div>
-  <div class="tab" data-view="brain">🧠 Brain Map</div>
-  <div class="tab" data-view="settings">⚙ Settings</div>
+<!-- Home view -->
+<div class="view" id="view-home">
+  <div class="home-content">
+    <div class="home-intro">
+      <div><div class="section-kicker">Private by default</div><h2>Your work, made reusable.</h2><p>Review the evidence from recent sessions, return to proven methods, and decide what deserves attention.</p></div>
+      <button type="button" class="button-primary" data-action="ask">Ask about your work</button>
+    </div>
+    <div class="home-grid">
+      <div>
+        <section class="home-section"><div class="section-heading"><h3>Recent work</h3><button class="text-button" type="button" data-view-link="sessions">View sessions</button></div><div class="evidence-list" id="home-sessions"><div class="home-empty">Loading recent sessions…</div></div></section>
+        <section class="home-section"><div class="section-heading"><h3>Proven methods</h3><button class="text-button" type="button" data-view-link="playbooks">View playbooks</button></div><div class="evidence-list" id="home-playbooks"><div class="home-empty">Loading playbooks…</div></div></section>
+      </div>
+      <aside class="attention-panel"><h3>Needs attention</h3><p id="home-gaps">Checking for knowledge gaps…</p><button type="button" class="text-button" data-view-link="gaps">Review knowledge gaps</button></aside>
+    </div>
+  </div>
 </div>
 
 <!-- Chat view -->
-<div class="view" id="view-chat">
+<div class="view hidden" id="view-chat">
   <div id="messages">
     <div class="msg assistant">
       <div class="label">capman2</div>
-      <div class="bubble">Hi! I have access to everything captured from your computer activity — searches, URLs, commands, documents, page content, and the LLM-extracted chain-of-thought workflows + troubleshooting playbooks from each work session.
-
-Switch tabs above to browse playbooks, knowledge gaps, or get context suggestions for a task. Or just ask me anything below.</div>
+      <div class="bubble">Ask a question about your captured work. I will ground answers in your sessions, playbooks, and linked evidence when it is available.</div>
     </div>
     <div id="scroll-anchor"></div>
   </div>
@@ -623,6 +740,9 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
   </div>
 </div>
 
+  </main>
+</div>
+
 <!-- Detail modal -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
@@ -633,11 +753,18 @@ Switch tabs above to browse playbooks, knowledge gaps, or get context suggestion
 
 <script>
 // ====================================================================
-// Tab switching
+// Workspace navigation
 // ====================================================================
-const tabs = document.querySelectorAll('.tab');
+const tabs = document.querySelectorAll('.nav-item[data-view]');
 const views = document.querySelectorAll('.view');
+const pageTitle = document.getElementById('page-title');
+const pageTitles = {
+  home: 'Today', chat: 'Ask Capman', sessions: 'Sessions', playbooks: 'Playbooks',
+  gaps: 'Knowledge gaps', brain: 'Knowledge map', context: 'Prepare a task',
+  storage: 'Storage', settings: 'Settings',
+};
 const loaders = {
+  home:      loadHome,
   playbooks: loadPlaybooks,
   gaps:      loadGaps,
   sessions:  loadSessions,
@@ -646,18 +773,32 @@ const loaders = {
   settings:  loadSettings,
 };
 const loaded = {};
-tabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    const view = tab.dataset.view;
-    tabs.forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    views.forEach(v => v.classList.add('hidden'));
-    document.getElementById('view-' + view).classList.remove('hidden');
-    if (loaders[view] && !loaded[view]) {
-      loaders[view]();
-      loaded[view] = true;
-    }
+function openView(view, focusInput = false) {
+  const target = document.getElementById('view-' + view);
+  if (!target) return;
+  tabs.forEach(t => {
+    const selected = t.dataset.view === view;
+    t.classList.toggle('active', selected);
+    if (selected) t.setAttribute('aria-current', 'page');
+    else t.removeAttribute('aria-current');
   });
+  views.forEach(v => v.classList.add('hidden'));
+  target.classList.remove('hidden');
+  pageTitle.textContent = pageTitles[view] || 'Capman';
+  if (loaders[view] && !loaded[view]) {
+    loaders[view]();
+    loaded[view] = true;
+  }
+  if (focusInput && view === 'chat') document.getElementById('input').focus();
+}
+tabs.forEach(tab => tab.addEventListener('click', () => openView(tab.dataset.view)));
+document.querySelectorAll('[data-view-link]').forEach(button => button.addEventListener('click', () => openView(button.dataset.viewLink)));
+document.querySelectorAll('[data-action="ask"]').forEach(button => button.addEventListener('click', () => openView('chat', true)));
+document.addEventListener('keydown', event => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    openView('chat', true);
+  }
 });
 
 // ====================================================================
@@ -666,23 +807,88 @@ tabs.forEach(tab => {
 const statusEl = document.getElementById('status');
 fetch('/health')
   .then(r => r.json())
-  .then(() => { statusEl.textContent = 'connected'; statusEl.style.color = '#22c55e'; })
-  .catch(() => { statusEl.textContent = 'offline'; statusEl.style.color = '#ef4444'; });
+  .then(() => { statusEl.textContent = 'Connected'; statusEl.classList.add('is-online'); })
+  .catch(() => { statusEl.textContent = 'Offline'; statusEl.classList.remove('is-online'); });
 
 // Refresh tab counts
 function refreshCounts() {
   fetch('/knowledge/playbooks?limit=1').then(r=>r.json()).then(d => {
     document.getElementById('count-playbooks').textContent = d.total || 0;
-  });
+  }).catch(() => {});
   fetch('/knowledge/gaps?top=1').then(r=>r.json()).then(d => {
     document.getElementById('count-gaps').textContent = d.total || 0;
-  });
-  fetch('/sessions?limit=1').then(r=>r.json()).then(d => {
-    document.getElementById('count-sessions').textContent = (d.sessions || []).length || '?';
-  });
+  }).catch(() => {});
+  fetch('/sessions?limit=100').then(r=>r.json()).then(d => {
+    document.getElementById('count-sessions').textContent = (d.sessions || []).length;
+  }).catch(() => {});
 }
 refreshCounts();
 setInterval(refreshCounts, 30000);
+
+// ====================================================================
+// Personal home: compact live evidence, not a static dashboard.
+// ====================================================================
+function relativeTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Captured recently';
+  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  if (minutes < 2) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+function evidenceRow(title, meta, trailing, onClick) {
+  const row = document.createElement('button');
+  row.type = 'button'; row.className = 'evidence-row';
+  row.innerHTML = `<span><span class="evidence-title"></span><span class="evidence-meta"></span></span><span class="evidence-trailing"></span>`;
+  row.querySelector('.evidence-title').textContent = title;
+  row.querySelector('.evidence-meta').textContent = meta;
+  row.querySelector('.evidence-trailing').textContent = trailing;
+  row.addEventListener('click', onClick);
+  return row;
+}
+function renderHomeEmpty(id, message, isError = false) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<div class="home-empty${isError ? ' home-error' : ''}"></div>`;
+  el.firstElementChild.textContent = message;
+}
+async function loadHome() {
+  const results = await Promise.allSettled([
+    fetch('/sessions?limit=5').then(r => r.ok ? r.json() : Promise.reject()),
+    fetch('/knowledge/playbooks?limit=3').then(r => r.ok ? r.json() : Promise.reject()),
+    fetch('/knowledge/gaps?top=3').then(r => r.ok ? r.json() : Promise.reject()),
+  ]);
+  const [sessionsResult, playbooksResult, gapsResult] = results;
+  const sessionsEl = document.getElementById('home-sessions');
+  sessionsEl.innerHTML = '';
+  if (sessionsResult.status === 'fulfilled' && sessionsResult.value.sessions.length) {
+    sessionsResult.value.sessions.forEach(session => {
+      const title = session.primary_domain || session.dominant_app || 'Captured work session';
+      const state = session.analyzed ? 'Analyzed' : 'Awaiting analysis';
+      sessionsEl.appendChild(evidenceRow(title, `${state} · ${session.event_count || 0} captured events`, relativeTime(session.started_at), () => openSession(session.id)));
+    });
+  } else if (sessionsResult.status === 'fulfilled') renderHomeEmpty('home-sessions', 'No sessions yet. Capture a focused piece of work to build your evidence trail.');
+  else renderHomeEmpty('home-sessions', 'Recent sessions could not be loaded.', true);
+
+  const playbooksEl = document.getElementById('home-playbooks');
+  playbooksEl.innerHTML = '';
+  if (playbooksResult.status === 'fulfilled' && playbooksResult.value.playbooks.length) {
+    playbooksResult.value.playbooks.forEach(playbook => {
+      const steps = playbook.diagnostic_step_count || 0;
+      playbooksEl.appendChild(evidenceRow(playbook.title || 'Untitled playbook', playbook.domain || 'General', `${steps} ${steps === 1 ? 'step' : 'steps'}`, () => openPlaybook(playbook.id)));
+    });
+  } else if (playbooksResult.status === 'fulfilled') renderHomeEmpty('home-playbooks', 'No proven methods yet. They appear after a useful session is analyzed.');
+  else renderHomeEmpty('home-playbooks', 'Proven methods could not be loaded.', true);
+
+  const gapsEl = document.getElementById('home-gaps');
+  if (gapsResult.status === 'fulfilled') {
+    const gaps = gapsResult.value.gaps || [];
+    gapsEl.textContent = gaps.length ? `${gaps.length} knowledge ${gaps.length === 1 ? 'gap needs' : 'gaps need'} review. Start with: ${gaps[0].topic || gaps[0].title || 'an unresolved area'}.` : 'No current knowledge gaps were identified.';
+  } else gapsEl.textContent = 'Knowledge gaps could not be loaded right now.';
+}
+loadHome();
+loaded.home = true;
 
 // ====================================================================
 // Modal
