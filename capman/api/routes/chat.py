@@ -197,6 +197,59 @@ async def _build_context(question: str, request: Request) -> str:
         except Exception as e:
             logger.debug("Commands fetch skipped: %s", e)
 
+    # 6-bis. Recent AI assistant sessions (Claude Code / Codex / Hermes)
+    if db:
+        try:
+            async with db._db.execute(
+                """SELECT payload, ts FROM events
+                   WHERE type='ai_conversation'
+                   ORDER BY ts DESC LIMIT ?""",
+                (int(_chat.get("recent_ai_messages", 120)),)
+            ) as cur:
+                rows = await cur.fetchall()
+            if rows:
+                by_session: dict[str, dict] = {}
+                for r in rows:
+                    p = json.loads(r["payload"])
+                    sid = f"{p.get('tool','ai')}:{p.get('session_id') or p.get('source_file','')}"
+                    s = by_session.setdefault(sid, {
+                        "tool": p.get("tool", "ai"),
+                        "project": p.get("project", ""),
+                        "cwd": p.get("cwd", ""),
+                        "model": p.get("model", ""),
+                        "first_ts": r["ts"], "last_ts": r["ts"],
+                        "user_turns": [], "assistant_last": "",
+                    })
+                    s["first_ts"] = min(s["first_ts"], r["ts"])
+                    s["last_ts"] = max(s["last_ts"], r["ts"])
+                    if p.get("role") == "user" and p.get("text"):
+                        s["user_turns"].append(p["text"])
+                    elif p.get("role") == "assistant" and p.get("text") and not s["assistant_last"]:
+                        s["assistant_last"] = p["text"]   # rows are newest-first
+
+                lines = []
+                for _sid, s in sorted(by_session.items(),
+                                      key=lambda kv: kv[1]["last_ts"], reverse=True)[:15]:
+                    lo = time.strftime("%Y-%m-%d %H:%M", time.localtime(s["first_ts"]))
+                    hi = time.strftime("%H:%M", time.localtime(s["last_ts"]))
+                    where = s["project"] or s["cwd"] or "?"
+                    head = f"  [{lo}–{hi}] {s['tool']} — {where}"
+                    if s["model"]:
+                        head += f"  ({s['model']})"
+                    lines.append(head)
+                    if s["user_turns"]:
+                        for turn in list(reversed(s["user_turns"]))[:4]:
+                            lines.append(f"      • asked: {turn[:200].strip()}")
+                    elif s["assistant_last"]:
+                        lines.append(f"      • did: {s['assistant_last'][:200].strip()}")
+                if lines:
+                    sections.append(
+                        "## Recent AI Assistant Sessions (Claude Code / Codex / Hermes)\n"
+                        + "\n".join(lines)
+                    )
+        except Exception as e:
+            logger.debug("AI sessions fetch skipped: %s", e)
+
     # 6a. Recent file activity (files the user directly opened / changed / deleted)
     if db:
         try:

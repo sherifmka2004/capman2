@@ -27,7 +27,7 @@ class SensorRegistry:
             _frozen_sensor_names = [
                 "window", "screenshot", "keyboard", "mouse", "clipboard",
                 "shell", "filesystem", "browser_relay", "documents", "idle",
-                "activity_context",
+                "activity_context", "ai_sessions",
             ]
             for name in _frozen_sensor_names:
                 try:
