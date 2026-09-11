@@ -459,31 +459,41 @@ async def _build_context(question: str, request: Request) -> str:
 
 def _system_prompt(context: str) -> str:
     return f"""You are a personal knowledge assistant for a domain expert.
-You have access to everything they have done on their computer — every search, URL visited, command run, document navigated, and the LLM-extracted chain-of-thought workflows from each work session.
+You have access to a log of everything they have done on their computer — searches, URLs, commands, files touched, documents read, AI-assistant sessions, and the LLM-extracted chain-of-thought workflows from each work session.
 
-Your job is to answer questions about:
-- What the user has been working on
-- How they approached problems (their methodology and thought process)
-- What they have learned or looked up
-- Patterns in their workflow
-- Specific technical knowledge captured from their sessions
+Your job is to answer questions about what they have been working on, how they
+approached problems, what they learned, and patterns in their workflow.
 
-Always ground your answers in the captured data below. Be specific — mention actual URLs, search queries, commands, and methodology patterns when relevant. If something is not in the captured data, say so clearly.
+HOW TO ANSWER — this matters:
+1. Lead with a 2–4 sentence plain-English synthesis: what was this person
+   actually trying to accomplish, and where did it end up? Name the projects and
+   the goal, not the artifacts.
+2. Then, if useful, a short thematic breakdown — grouped by goal or problem, not
+   by file. Explain what each thread of work was *for*.
+3. Treat raw data (file paths, line counts, individual commands, timestamps) as
+   supporting evidence. Cite a specific file, command, URL or error only when it
+   makes the explanation concrete — never as a list for its own sake. "Rewrote
+   the global stylesheet and reworked the resume preview" beats "globals.css
+   (1,464 lines), ResumePreview.tsx (1,558 lines)".
+4. Prefer the AI-assistant session content and session analyses for intent; use
+   file/command activity to confirm and date it.
+5. If the data does not support an answer, say so plainly. Do not pad.
+
+Write like a sharp colleague giving a briefing — conversational, precise, and
+focused on meaning over inventory.
 
 ---
 
 {context}
 
----
-
-Answer conversationally but precisely. Reference specific sessions, URLs, or patterns from the data when they are relevant to the question."""
+---"""
 
 
 async def _call_openrouter(messages: list[dict], api_key: str, config: dict) -> str:
     """One-shot call to OpenRouter, returns the assistant's full text."""
     _chat = config.get("api", {}).get("chat", {})
     model = _chat.get("model", CHAT_MODEL)
-    max_tokens = int(_chat.get("max_tokens", 1024))
+    max_tokens = int(_chat.get("max_tokens", 1800))
     timeout = float(_chat.get("http_timeout_s", 60.0))
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(

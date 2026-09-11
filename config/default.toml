@@ -236,7 +236,7 @@ port = 7331
 
 [api.chat]
 model = "anthropic/claude-sonnet-4-6"   # model used for the chat assistant
-max_tokens = 1024
+max_tokens = 1800                        # room for a synthesis + a short breakdown
 http_timeout_s = 60.0
 # Context window limits (how many items to pull from each source)
 recent_sessions = 10
@@ -245,6 +245,7 @@ recent_urls = 25
 recent_searches = 20
 recent_commands = 25
 recent_files = 60
+recent_ai_messages = 120     # Claude Code / Codex / Hermes transcript messages
 vector_top_k = 5             # semantic search hits for the user's question
 doc_top_k = 6                # document content hits
 page_top_k = 6               # visited-page content hits
