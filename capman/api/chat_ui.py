@@ -166,6 +166,16 @@ CHAT_HTML = """<!DOCTYPE html>
   button.primary:disabled { background: #1e3a6a; color: #555; cursor: not-allowed; }
 
   /* ---------- Cards (playbooks, gaps, sessions) ---------- */
+  .list-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 20px 0; font-size: 12px; color: #888;
+  }
+  .list-toolbar label { color: #777; }
+  .sort-select {
+    background: #111; border: 1px solid #333; color: #ccc;
+    border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer;
+  }
+  .sort-select:focus { outline: none; border-color: #2563eb; }
   .card-list {
     flex: 1;
     overflow-y: auto;
@@ -481,6 +491,14 @@ CHAT_HTML = """<!DOCTYPE html>
 
 <!-- Playbooks view -->
 <div class="view hidden" id="view-playbooks">
+  <div class="list-toolbar">
+    <label for="playbooks-sort">Sort</label>
+    <select id="playbooks-sort" class="sort-select" onchange="setPlaybookSort(this.value)">
+      <option value="recent">Most recent</option>
+      <option value="reusability">Reusability score</option>
+      <option value="title">Title (A–Z)</option>
+    </select>
+  </div>
   <div class="card-list" id="playbooks-list">
     <div class="empty">Loading playbooks...</div>
   </div>
@@ -488,6 +506,14 @@ CHAT_HTML = """<!DOCTYPE html>
 
 <!-- Gaps view -->
 <div class="view hidden" id="view-gaps">
+  <div class="list-toolbar">
+    <label for="gaps-sort">Sort</label>
+    <select id="gaps-sort" class="sort-select" onchange="setGapSort(this.value)">
+      <option value="frequency">Most looked up</option>
+      <option value="recent">Recently looked up</option>
+      <option value="first_seen">Newest gaps</option>
+    </select>
+  </div>
   <div class="card-list" id="gaps-list">
     <div class="empty">Loading knowledge gaps...</div>
   </div>
@@ -907,9 +933,12 @@ function openModal(html) {
 // ====================================================================
 // Playbooks tab
 // ====================================================================
+let _playbookSort = 'recent';
+function setPlaybookSort(v) { _playbookSort = v; loadPlaybooks(); }
+
 function loadPlaybooks() {
   const list = document.getElementById('playbooks-list');
-  fetch('/knowledge/playbooks?limit=100')
+  fetch('/knowledge/playbooks?limit=100&sort=' + encodeURIComponent(_playbookSort))
     .then(r => r.json())
     .then(data => {
       const pbs = data.playbooks || [];
@@ -978,19 +1007,23 @@ function openPlaybook(id) {
 // Knowledge Gaps tab
 // ====================================================================
 let _allGaps = [];
+let _gapSort = 'frequency';
+let _gapDomain = 'all';
+function setGapSort(v) { _gapSort = v; loadGaps(); }
 
 function loadGaps() {
   const list = document.getElementById('gaps-list');
-  fetch('/knowledge/gaps?top=100')
+  fetch('/knowledge/gaps?top=100&sort=' + encodeURIComponent(_gapSort))
     .then(r => r.json())
     .then(data => {
       _allGaps = data.gaps || [];
       document.getElementById('count-gaps').textContent = data.total || 0;
-      renderGaps('all');
+      renderGaps(_gapDomain);
     });
 }
 
 function renderGaps(domainFilter) {
+  _gapDomain = domainFilter;
   const list = document.getElementById('gaps-list');
   if (!_allGaps.length) {
     list.innerHTML = '<div class="empty">No knowledge gaps tracked yet. Gaps are detected when you repeatedly look up the same concept across sessions.</div>';

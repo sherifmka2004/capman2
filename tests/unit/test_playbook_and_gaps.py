@@ -224,3 +224,52 @@ async def test_playbook_filter_by_domain(db):
     react = await db.get_playbooks(domain="react")
     assert len(react) == 1
     assert react[0]["domain"] == "react"
+
+
+async def test_playbook_sort_modes(db):
+    from capman.events import Session, Event, EventType
+    specs = [
+        ("sess-old", "Zeta cache warmup", 1000.0, 0.9),
+        ("sess-mid", "Alpha retry loop", 2000.0, 0.2),
+        ("sess-new", "Mu timeout tuning", 3000.0, 0.5),
+    ]
+    for sid, title, created, score in specs:
+        s = Session(dominant_app="x", ended_at=time.time())
+        s.id = sid
+        s.events = [Event(type=EventType.SHELL_COMMAND)]
+        await db.upsert_session(s)
+        pb = _sample_playbook()
+        pb.session_id, pb.title, pb.created_at, pb.reusability_score = sid, title, created, score
+        await db.save_playbook(pb)
+
+    recent = [p["title"] for p in await db.get_playbooks(sort="recent")]
+    assert recent == ["Mu timeout tuning", "Alpha retry loop", "Zeta cache warmup"]
+
+    reuse = [p["title"] for p in await db.get_playbooks(sort="reusability")]
+    assert reuse[0] == "Zeta cache warmup" and reuse[-1] == "Alpha retry loop"
+
+    az = [p["title"] for p in await db.get_playbooks(sort="title")]
+    assert az == ["Alpha retry loop", "Mu timeout tuning", "Zeta cache warmup"]
+
+    # unknown sort falls back to recent, never raises
+    assert [p["title"] for p in await db.get_playbooks(sort="bogus")] == recent
+
+
+async def test_gap_sort_modes(db):
+    await update_gaps_from_search_queries(db, "s1", ["what is mmap syscall semantics"])
+    await update_gaps_from_search_queries(db, "s2", ["what is mmap syscall semantics"])  # freq 2
+    await update_gaps_from_search_queries(db, "s3", ["how does io_uring submission work"])
+
+    # bump io_uring's last_seen so it is the most-recent but still freq 1
+    await db._db.execute(
+        "UPDATE knowledge_gaps SET last_seen = 9e9 WHERE concept LIKE '%io_uring%'"
+    )
+    await db._db.commit()
+
+    by_freq = [g["concept"] for g in await db.get_top_knowledge_gaps(sort="frequency")]
+    assert "mmap" in by_freq[0]
+
+    by_recent = [g["concept"] for g in await db.get_top_knowledge_gaps(sort="recent")]
+    assert "io_uring" in by_recent[0]
+
+    assert [g["concept"] for g in await db.get_top_knowledge_gaps(sort="bogus")] == by_freq
