@@ -188,6 +188,7 @@ Currently, that methodology is invisible. It lives only in the expert's head, an
 | `capman-fsmon` | **Privileged deep monitor** (opt-in, needs root): true file *opens/reads* + the responsible **process** (PID/comm/exe/signing-id/TTY). Linux via fanotify (auditd/eBPF fallback); macOS via Endpoint Security `eslogger` (or `fs_usage`, needs Full Disk Access). POSTs to the daemon. See [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md). | Linux, macOS |
 | `browser_relay` | Tab lifecycle, URLs, search queries, page text (via extension) | Chrome, Firefox |
 | `documents` | Slide/page/sheet navigation with dwell times + **content of what you actually read** | macOS, Linux, Windows |
+| `ai_sessions` | **Terminal AI-assistant transcripts** — one `ai_conversation` event per user / assistant message from Claude Code (`~/.claude/projects/**/*.jsonl`), Codex CLI (`~/.codex/sessions/**/rollout-*.jsonl`), and Hermes (`~/.hermes/.hermes_history` + `~/.hermes/state.db`). Tool calls / results / bootstrap prompts filtered out. Local files only — no network, no keys. | macOS, Linux, Windows |
 
 ### Document Navigation (the layer nobody else has)
 
@@ -224,6 +225,31 @@ Optionally enable **`capman-fsmon`** (root; Linux via fanotify/auditd/eBPF,
 macOS via Endpoint Security `eslogger`) to also capture true file *opens/reads*
 and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITORING.md).
 
+### Terminal AI-Assistant Sessions
+
+The `ai_sessions` sensor tails the transcript files your CLI coding agents
+already write to disk and turns each user / assistant message into an
+`ai_conversation` event, so the timeline and the chatbot know **which agent ran
+where, on what, with which model** — not just the shell commands around it.
+
+| Assistant | Source | Notes |
+|-----------|--------|-------|
+| **Claude Code** | `~/.claude/projects/<slug>/<session>.jsonl` (+ `subagents/`) | Real prompts only — `tool_result` / local-command envelopes dropped |
+| **Codex CLI** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `response_item` messages; `developer`/`system` scaffolding dropped |
+| **Hermes** | `~/.hermes/.hermes_history` (human prompts) + `~/.hermes/state.db` `messages` (agent work, joined to `sessions` for title + model) | Paperclip "You are …, an AI agent" bootstrap prompts and canned heartbeat replies filtered |
+
+Steady-state cost is a `stat` + short read per file (and one indexed
+`id > cursor` query on the Hermes DB) every `poll_interval_s`. On the first scan
+after a restart it replays up to `backfill_max_lines` lines from files touched in
+the last `backfill_hours` so recall is current immediately. Configure under
+`[sensors.ai_sessions]` — set extra `roots`, point `hermes_db` / `hermes_history`
+elsewhere, or set `backfill_hours = 0` for forward-only capture.
+
+> Raw transcript text is captured verbatim, including anything you typed to an
+> agent. It stays local like all raw capture (only the derived playbook / node /
+> session layer is ever exportable), but review `[storage.sharing]` and
+> `redact_by_default` if that matters to you.
+
 ---
 
 ## Architecture
@@ -232,7 +258,7 @@ and the *responsible process* — see [docs/FILE_MONITORING.md](docs/FILE_MONITO
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Capture Sensors                           │
 │  window · keyboard · mouse · idle · clipboard · screenshot       │
-│  shell · filesystem · browser_relay · documents                  │
+│  shell · filesystem · browser_relay · documents · ai_sessions    │
 └────────────────────────┬─────────────────────────────────────────┘
                          │ Event objects (typed, timestamped)
                          ▼
@@ -460,7 +486,7 @@ capman start
 
 On a desktop (with `$DISPLAY` / Wayland), all sensors activate.
 
-On a server or SSH session without a display, headless mode is detected automatically and only the sensors that don't require a GUI are enabled: `shell`, `filesystem`, `browser_relay`.
+On a server or SSH session without a display, headless mode is detected automatically and only the sensors that don't require a GUI are enabled: `shell`, `filesystem`, `browser_relay`, `ai_sessions`.
 
 ```bash
 capman start --headless   # force headless regardless of $DISPLAY
@@ -551,7 +577,7 @@ keystroke    = 30
 
 [sensors]
 enabled = ["window", "screenshot", "keyboard", "clipboard",
-           "shell", "filesystem", "browser_relay", "documents"]
+           "shell", "filesystem", "browser_relay", "documents", "ai_sessions"]
 ```
 
 ### Retention
@@ -707,7 +733,8 @@ capman2/
 │   │   ├── filesystem.py     # file open/save/close via watchdog
 │   │   ├── shell.py          # shell history watcher
 │   │   ├── browser_relay.py  # HTTP receiver for browser extension
-│   │   └── documents.py      # slide/page/sheet navigation with dwell times
+│   │   ├── documents.py      # slide/page/sheet navigation with dwell times
+│   │   └── ai_sessions.py    # Claude Code / Codex / Hermes transcript tailer
 │   ├── platform/
 │   │   ├── base.py           # PlatformAdapter ABC + app classification registry
 │   │   ├── macos.py          # AppleScript queries for Office/iWork/Notes
@@ -760,7 +787,8 @@ capman2/
     │   ├── test_session_detector.py
     │   ├── test_graph_merger.py
     │   ├── test_document_sensor.py
-    │   └── test_document_markdown.py
+    │   ├── test_document_markdown.py
+    │   └── test_ai_sessions_sensor.py
     └── integration/
         └── test_storage.py
 ```

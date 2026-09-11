@@ -437,19 +437,35 @@ class TimelineDB:
             )
         await self._db.commit()
 
-    async def get_top_knowledge_gaps(self, limit: int = 20) -> list[dict]:
+    # sort key -> ORDER BY clause
+    _GAP_SORTS = {
+        "frequency": "lookup_count DESC, last_seen DESC",
+        "recent": "last_seen DESC, lookup_count DESC",
+        "first_seen": "first_seen DESC, lookup_count DESC",
+    }
+    _PLAYBOOK_SORTS = {
+        "recent": "created_at DESC",
+        "reusability": "reusability_score DESC, created_at DESC",
+        "title": "title COLLATE NOCASE ASC",
+    }
+
+    async def get_top_knowledge_gaps(self, limit: int = 20, sort: str = "frequency") -> list[dict]:
+        order = self._GAP_SORTS.get(sort, self._GAP_SORTS["frequency"])
         async with self._db.execute(
-            "SELECT * FROM knowledge_gaps WHERE resolved = 0 ORDER BY lookup_count DESC, last_seen DESC LIMIT ?",
+            f"SELECT * FROM knowledge_gaps WHERE resolved = 0 ORDER BY {order} LIMIT ?",
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
-    async def get_playbooks(self, domain: str | None = None, limit: int = 50) -> list[dict]:
+    async def get_playbooks(
+        self, domain: str | None = None, limit: int = 50, sort: str = "recent"
+    ) -> list[dict]:
+        order = self._PLAYBOOK_SORTS.get(sort, self._PLAYBOOK_SORTS["recent"])
         if domain:
-            sql = "SELECT * FROM playbooks WHERE domain = ? ORDER BY created_at DESC LIMIT ?"
+            sql = f"SELECT * FROM playbooks WHERE domain = ? ORDER BY {order} LIMIT ?"
             args = (domain, limit)
         else:
-            sql = "SELECT * FROM playbooks ORDER BY created_at DESC LIMIT ?"
+            sql = f"SELECT * FROM playbooks ORDER BY {order} LIMIT ?"
             args = (limit,)
         async with self._db.execute(sql, args) as cur:
             return [dict(r) for r in await cur.fetchall()]

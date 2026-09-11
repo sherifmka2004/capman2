@@ -2,7 +2,7 @@
 # Merge on top of default.toml + linux.toml
 
 [sensors]
-enabled = ["shell", "filesystem", "browser_relay"]
+enabled = ["shell", "filesystem", "browser_relay", "ai_sessions"]
 
 [pipeline.session]
 idle_threshold_s = 60

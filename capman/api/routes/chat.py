@@ -197,6 +197,59 @@ async def _build_context(question: str, request: Request) -> str:
         except Exception as e:
             logger.debug("Commands fetch skipped: %s", e)
 
+    # 6-bis. Recent AI assistant sessions (Claude Code / Codex / Hermes)
+    if db:
+        try:
+            async with db._db.execute(
+                """SELECT payload, ts FROM events
+                   WHERE type='ai_conversation'
+                   ORDER BY ts DESC LIMIT ?""",
+                (int(_chat.get("recent_ai_messages", 120)),)
+            ) as cur:
+                rows = await cur.fetchall()
+            if rows:
+                by_session: dict[str, dict] = {}
+                for r in rows:
+                    p = json.loads(r["payload"])
+                    sid = f"{p.get('tool','ai')}:{p.get('session_id') or p.get('source_file','')}"
+                    s = by_session.setdefault(sid, {
+                        "tool": p.get("tool", "ai"),
+                        "project": p.get("project", ""),
+                        "cwd": p.get("cwd", ""),
+                        "model": p.get("model", ""),
+                        "first_ts": r["ts"], "last_ts": r["ts"],
+                        "user_turns": [], "assistant_last": "",
+                    })
+                    s["first_ts"] = min(s["first_ts"], r["ts"])
+                    s["last_ts"] = max(s["last_ts"], r["ts"])
+                    if p.get("role") == "user" and p.get("text"):
+                        s["user_turns"].append(p["text"])
+                    elif p.get("role") == "assistant" and p.get("text") and not s["assistant_last"]:
+                        s["assistant_last"] = p["text"]   # rows are newest-first
+
+                lines = []
+                for _sid, s in sorted(by_session.items(),
+                                      key=lambda kv: kv[1]["last_ts"], reverse=True)[:15]:
+                    lo = time.strftime("%Y-%m-%d %H:%M", time.localtime(s["first_ts"]))
+                    hi = time.strftime("%H:%M", time.localtime(s["last_ts"]))
+                    where = s["project"] or s["cwd"] or "?"
+                    head = f"  [{lo}–{hi}] {s['tool']} — {where}"
+                    if s["model"]:
+                        head += f"  ({s['model']})"
+                    lines.append(head)
+                    if s["user_turns"]:
+                        for turn in list(reversed(s["user_turns"]))[:4]:
+                            lines.append(f"      • asked: {turn[:200].strip()}")
+                    elif s["assistant_last"]:
+                        lines.append(f"      • did: {s['assistant_last'][:200].strip()}")
+                if lines:
+                    sections.append(
+                        "## Recent AI Assistant Sessions (Claude Code / Codex / Hermes)\n"
+                        + "\n".join(lines)
+                    )
+        except Exception as e:
+            logger.debug("AI sessions fetch skipped: %s", e)
+
     # 6a. Recent file activity (files the user directly opened / changed / deleted)
     if db:
         try:
@@ -406,31 +459,41 @@ async def _build_context(question: str, request: Request) -> str:
 
 def _system_prompt(context: str) -> str:
     return f"""You are a personal knowledge assistant for a domain expert.
-You have access to everything they have done on their computer — every search, URL visited, command run, document navigated, and the LLM-extracted chain-of-thought workflows from each work session.
+You have access to a log of everything they have done on their computer — searches, URLs, commands, files touched, documents read, AI-assistant sessions, and the LLM-extracted chain-of-thought workflows from each work session.
 
-Your job is to answer questions about:
-- What the user has been working on
-- How they approached problems (their methodology and thought process)
-- What they have learned or looked up
-- Patterns in their workflow
-- Specific technical knowledge captured from their sessions
+Your job is to answer questions about what they have been working on, how they
+approached problems, what they learned, and patterns in their workflow.
 
-Always ground your answers in the captured data below. Be specific — mention actual URLs, search queries, commands, and methodology patterns when relevant. If something is not in the captured data, say so clearly.
+HOW TO ANSWER — this matters:
+1. Lead with a 2–4 sentence plain-English synthesis: what was this person
+   actually trying to accomplish, and where did it end up? Name the projects and
+   the goal, not the artifacts.
+2. Then, if useful, a short thematic breakdown — grouped by goal or problem, not
+   by file. Explain what each thread of work was *for*.
+3. Treat raw data (file paths, line counts, individual commands, timestamps) as
+   supporting evidence. Cite a specific file, command, URL or error only when it
+   makes the explanation concrete — never as a list for its own sake. "Rewrote
+   the global stylesheet and reworked the resume preview" beats "globals.css
+   (1,464 lines), ResumePreview.tsx (1,558 lines)".
+4. Prefer the AI-assistant session content and session analyses for intent; use
+   file/command activity to confirm and date it.
+5. If the data does not support an answer, say so plainly. Do not pad.
+
+Write like a sharp colleague giving a briefing — conversational, precise, and
+focused on meaning over inventory.
 
 ---
 
 {context}
 
----
-
-Answer conversationally but precisely. Reference specific sessions, URLs, or patterns from the data when they are relevant to the question."""
+---"""
 
 
 async def _call_openrouter(messages: list[dict], api_key: str, config: dict) -> str:
     """One-shot call to OpenRouter, returns the assistant's full text."""
     _chat = config.get("api", {}).get("chat", {})
     model = _chat.get("model", CHAT_MODEL)
-    max_tokens = int(_chat.get("max_tokens", 1024))
+    max_tokens = int(_chat.get("max_tokens", 1800))
     timeout = float(_chat.get("http_timeout_s", 60.0))
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(

@@ -48,12 +48,16 @@ async def list_triples(request: Request, limit: int = 100):
 
 
 @router.get("/gaps")
-async def list_knowledge_gaps(request: Request, top: int = 20):
-    """Top concepts the user repeatedly looks up — sign of unmastered knowledge."""
+async def list_knowledge_gaps(request: Request, top: int = 20, sort: str = "frequency"):
+    """Top concepts the user repeatedly looks up — sign of unmastered knowledge.
+
+    sort: ``frequency`` (default, most looked up) | ``recent`` (most recently
+    looked up) | ``first_seen`` (newest gaps first).
+    """
     db = request.app.state.db
     if db is None:
         return {"gaps": []}
-    rows = await db.get_top_knowledge_gaps(limit=top)
+    rows = await db.get_top_knowledge_gaps(limit=top, sort=sort)
     return {
         "gaps": [
             {
@@ -89,12 +93,18 @@ async def resolve_knowledge_gap(request: Request):
 
 
 @router.get("/playbooks")
-async def list_playbooks(request: Request, domain: str | None = None, limit: int = 50):
-    """All extracted troubleshooting playbooks. Filter by ?domain=networking|react|..."""
+async def list_playbooks(
+    request: Request, domain: str | None = None, limit: int = 50, sort: str = "recent"
+):
+    """All extracted troubleshooting playbooks. Filter by ?domain=networking|react|...
+
+    sort: ``recent`` (default, newest first) | ``reusability`` (highest score
+    first) | ``title`` (A–Z).
+    """
     db = request.app.state.db
     if db is None:
         return {"playbooks": []}
-    rows = await db.get_playbooks(domain=domain, limit=limit)
+    rows = await db.get_playbooks(domain=domain, limit=limit, sort=sort)
     return {
         "playbooks": [
             {

@@ -17,6 +17,51 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions"
 
+# The model returns a JSON array of 7 domain objects; 1024 tokens was not always
+# enough and a mid-string cutoff made json.loads raise "Unterminated string".
+_LLM_MAX_TOKENS = 4096
+
+
+def _parse_json_array(raw: str) -> list | None:
+    """Parse a JSON array, salvaging the complete leading elements if the
+    response was truncated mid-object."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    # Truncated: keep whole objects up to the last balanced "}".
+    depth = 0
+    end = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(raw):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\" and in_str:
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+    if end == -1:
+        return None
+    try:
+        salvaged = json.loads(raw[: end + 1] + "]")
+        logger.warning("Brain recategorize: response truncated, salvaged %d domains", len(salvaged))
+        return salvaged
+    except json.JSONDecodeError:
+        return None
+
 # Fixed layout metadata — hotspot/label_anchor never change (anatomical positions)
 REGION_LAYOUT = {
     "research":      {"hotspot": [335, 188], "label_anchor": [4, 72]},
@@ -185,16 +230,14 @@ def _openrouter_call(prompt: str, model: str, timeout: float) -> list | None:
             },
             json={
                 "model": _OR_MAP.get(model, f"anthropic/{model}"),
-                "max_tokens": 1024,
+                "max_tokens": _LLM_MAX_TOKENS,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=timeout,
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"].strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-        return json.loads(raw)
+        raw = resp.json()["choices"][0]["message"]["content"]
+        return _parse_json_array(raw)
     except Exception as e:
         logger.error("Brain recategorize LLM call failed: %s", e)
         return None
@@ -206,13 +249,10 @@ def _anthropic_call(prompt: str, model: str) -> list | None:
         client = anthropic.Anthropic()
         resp = client.messages.create(
             model=model,
-            max_tokens=1024,
+            max_tokens=_LLM_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = resp.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-        return json.loads(raw)
+        return _parse_json_array(resp.content[0].text)
     except Exception as e:
         logger.error("Brain recategorize LLM call failed: %s", e)
         return None

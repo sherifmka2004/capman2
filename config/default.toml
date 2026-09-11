@@ -3,7 +3,7 @@ data_dir = "~/.capman"
 log_level = "INFO"
 
 [sensors]
-enabled = ["window", "screenshot", "keyboard", "mouse", "clipboard", "shell", "filesystem", "browser_relay", "documents", "idle"]
+enabled = ["window", "screenshot", "keyboard", "mouse", "clipboard", "shell", "filesystem", "browser_relay", "documents", "idle", "ai_sessions"]
 
 [sensors.screenshot]
 interval_seconds = 30
@@ -122,6 +122,20 @@ deep_monitor_paths = []   # defaults to watch_paths when empty
 [sensors.browser_relay]
 port = 7331
 
+[sensors.ai_sessions]
+# Tails local transcripts of terminal AI assistants and emits one
+# AI_CONVERSATION event per user / assistant message. No network, no API keys.
+poll_interval_s = 3.0
+# On the first scan after a (re)start, replay recent history so "what was I
+# doing an hour ago" works immediately. 0 backfill_hours = forward-only.
+backfill_hours = 12
+backfill_max_lines = 200
+# Claude Code + Codex transcript roots (globbed for *.jsonl).
+roots = ["~/.claude/projects", "~/.codex/sessions"]
+# Hermes agent: the message store + the human prompt log.
+hermes_db = "~/.hermes/state.db"
+hermes_history = "~/.hermes/.hermes_history"
+
 [sensors.documents]
 poll_interval_s = 2.0
 # Minimum dwell seconds before a slide/page change is considered meaningful
@@ -222,7 +236,7 @@ port = 7331
 
 [api.chat]
 model = "anthropic/claude-sonnet-4-6"   # model used for the chat assistant
-max_tokens = 1024
+max_tokens = 1800                        # room for a synthesis + a short breakdown
 http_timeout_s = 60.0
 # Context window limits (how many items to pull from each source)
 recent_sessions = 10
@@ -231,6 +245,7 @@ recent_urls = 25
 recent_searches = 20
 recent_commands = 25
 recent_files = 60
+recent_ai_messages = 120     # Claude Code / Codex / Hermes transcript messages
 vector_top_k = 5             # semantic search hits for the user's question
 doc_top_k = 6                # document content hits
 page_top_k = 6               # visited-page content hits

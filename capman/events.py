@@ -93,6 +93,10 @@ class Event:
                         "actor": dict, "via_command"?: str, "command_id"?: str}
       CODE_DIFF:       {"path": str, "extension": str, "diff": str, "lines_added": int,
                         "lines_removed": int, "repo"?: str, "branch"?: str, "attribution": str, "actor": dict}
+      AI_CONVERSATION: {"tool": "claude-code|codex|...", "role": "user|assistant",
+                        "text": str, "text_chars": int, "session_id": str,
+                        "cwd"?: str, "project"?: str, "model"?: str, "git_branch"?: str,
+                        "subagent"?: bool, "source_file": str}
     """
     type: EventType = EventType.WINDOW_FOCUS
     app: str = ""

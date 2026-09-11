@@ -42,7 +42,8 @@ differ, where each wins, and how you'd use them together.
 | **Browser URLs / search queries** | ⚠️ only as text on screen (OCR); no structured URL events | ✅ structured `url_visit` / `search_query` events via the extension |
 | **Browser page *text* (full content, embedded)** | ⚠️ only what's visible on screen | ✅ extracts page body + headings, chunks & embeds into the vector store |
 | **In-page interactions (clicks, form inputs, submits, modals, iframes)** | ❌ | ✅ `interactions.js` content script (with sensitive-field redaction) |
-| **AI-chat conversations (ChatGPT/Claude/Cursor)** | ⚠️ only the visible text on screen | ⚠️ partial — captured as page text / clicks (no dedicated structured extractor yet) |
+| **AI-chat conversations (ChatGPT/Claude/Cursor)** | ⚠️ only the visible text on screen | ⚠️ browser AI chats captured as page text / clicks (no dedicated web extractor yet) |
+| **Terminal AI-assistant sessions (Claude Code / Codex / Hermes)** | ⚠️ only if on screen and OCR catches it | ✅ `ai_sessions` sensor tails the on-disk transcripts → structured `ai_conversation` events (agent, model, project, per-message role) with tool-plumbing filtered out |
 | **Shell / terminal commands** | ⚠️ only if the terminal is on screen and OCR catches it | ✅ real-time hook (bash `DEBUG` trap + zsh `preexec`) → command, cwd, **exit code**, duration, TTY/SSH context, shell PID |
 | **Shell output / errors** | ⚠️ via OCR if visible | ⚠️ optional output capture; error/stack-trace tagging is roadmap |
 | **File operations (create/save/delete/rename)** | ❌ | ✅ `filesystem` sensor — and attributed to **direct user action** (editor / interactive shell / focused file manager), dropping build-tool/LSP/daemon churn |
@@ -106,7 +107,7 @@ stores playbooks/triples/gaps as first-class objects.
 |---|---|---|
 | Local-first | ✅ 100% local by default; optional cloud OCR/STT | ✅ 100% local capture & storage; LLM analysis calls out to Anthropic/OpenRouter (you control which, or disable) |
 | Sensitive-data handling | ✅ PII redaction options | ✅ password/secret field redaction in the browser extension; keyboard sensor excludes password managers; `~/.capman/**` never self-monitored; file monitoring is user-action-only by design. *Note: with `forget about concerns` mode the bias is toward maximum capture — review your config.* |
-| Platforms | macOS (best — ScreenCaptureKit), Windows, Linux | macOS, Linux, Windows (display sensors); Linux + macOS for the privileged deep file monitor; **headless** mode (servers/SSH) runs shell + filesystem + browser-relay only |
+| Platforms | macOS (best — ScreenCaptureKit), Windows, Linux | macOS, Linux, Windows (display sensors); Linux + macOS for the privileged deep file monitor; **headless** mode (servers/SSH) runs shell + filesystem + browser-relay + ai_sessions only |
 | Footprint | Disk-heavy (video + audio chunks → many GB/day); CPU for OCR/STT | Disk-light (no video/audio; ~MB/day typical); LLM API cost per session |
 | Maturity / ecosystem | Mature, polished desktop app, active community, funded | Young, single-dev, CLI + web UI, rougher; the cognitive layer is the differentiator, not the polish |
 | License | MIT | (project license — see repo) |
