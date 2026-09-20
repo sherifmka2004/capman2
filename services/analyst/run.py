@@ -120,12 +120,6 @@ async def run_cycle(tenant: str, manifest: ProductManifest, db: AnalystDB,
             analyzed_ids.append(ep["id"])
         else:
             stats["llm_failures"] = stats.get("llm_failures", 0) + 1
-        elif getattr(analyzer, "_backend", "") == "none":
-            # No LLM configured at all: mark analyzed so cycles stay cheap;
-            # an LLM *error* instead leaves analyzed=0 for the next retry.
-            analyzed_ids.append(ep["id"])
-        else:
-            stats["llm_failures"] = stats.get("llm_failures", 0) + 1
 
     await db.mark_analyzed(tenant, analyzed_ids)
     stats["analyzed"] = len(analyzed_ids)
