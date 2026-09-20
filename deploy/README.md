@@ -66,6 +66,33 @@ connecting (see the SQL in `postgres/init/001_capman_multi_user.sql`).
 - Roles are `NOLOGIN` grouping roles; each human/user is a `LOGIN` role that is a member of `capman_app`. `capman_app` holds only the DML it needs — no DDL, no superuser.
 - MinIO mirrors the boundary at the object layer: a user can only reach their own bucket prefix.
 
+## Product tenants (web behavior)
+
+The web-behavior pipeline (see `docs/WEB_BEHAVIOR.md`) treats each product as
+another tenant. Provision one with:
+
+```bash
+./bootstrap.sh add-product acme        # key must match ^[a-z0-9_]+$
+```
+
+- **Postgres only** — a `LOGIN` role `cw_acme` (role names cannot contain `:`),
+  member of `capman_app`. No MinIO bucket: this path stores no blobs.
+- The RLS tenant id is the literal string `product:acme` — **not** a `hash_id`
+  of the key. The collector/analyst set `SET capman.user_id = 'product:acme'`
+  after connecting, exactly like human tenants.
+- Credentials land in `.provisioned-users.tsv` with the same 3-column format.
+
+`postgres/init/002_web_behavior.sql` adds the two generic tables this path
+uses — `web_episodes` (one row per task attempt: signature, outcome, step
+reached, friction flags) and `playbook_verifications` (did the shipped fix
+move the metric) — under the identical `FORCE ROW LEVEL SECURITY` +
+`tenant_isolation` boundary as 001. It auto-applies on first boot via
+`docker-entrypoint-initdb.d`; for an **existing** volume, apply it manually:
+
+```bash
+psql -h localhost -U capman_admin -d capman -f postgres/init/002_web_behavior.sql
+```
+
 ## Network & TLS
 
 - All three services sit on a private `capman` bridge network.

@@ -1,0 +1,200 @@
+# Nuralto product manifest — the worked example for the web-behavior pipeline.
+# This file is DATA, not code: it lives in examples/ deliberately. Nothing under
+# capman/ or services/ may reference it or contain product-specific nouns.
+#
+# Validate:  capman web codegen examples/manifests/nuralto.toml --lang ts
+
+[product]
+key         = "nuralto"
+description = "Nuralto — an AI resume builder: visitors create or import a resume, tailor it with AI assistance, check its ATS score, export it, and optionally subscribe."
+glossary = { ats = "applicant tracking system — software that scores how machine-parseable a resume is", tailoring = "AI-adjusting resume content to match a specific job posting", paywall_gate = "the feature limit that triggers the upgrade prompt" }
+
+[retention]
+raw_events_days = 45
+episodes_days   = 180
+
+[session]
+idle_threshold_s = 30
+cool_period_s    = 45
+hard_break_s     = 1800
+min_events       = 3
+
+[steps]
+order = ["land", "start", "edit", "assist", "score", "export", "pay"]
+
+[outcomes]
+success_when = ["export_result.ok == true", "checkout_result.ok == true"]
+
+# ── land ────────────────────────────────────────────────────────────────────
+
+[[events]]
+name = "signup_started"
+step = "land"
+
+[[events]]
+name = "signup_completed"
+step = "land"
+
+[[events]]
+name = "discover_searched"
+step = "land"
+props = { result_count = { type = "bucket", buckets = [0.0, 1.0, 5.0, 20.0] } }
+
+[[events]]
+name = "job_saved"
+step = "land"
+props = { source = { type = "enum", values = ["search", "recommendation"] } }
+
+[[events]]
+name = "pricing_view"
+step = "land"
+
+# ── start ───────────────────────────────────────────────────────────────────
+# resume_start_mode is the highest-information event: blank vs import vs sample
+# are three different users with three different intents.
+
+[[events]]
+name = "resume_start_mode"
+step = "start"
+props = { mode = { type = "enum", values = ["blank", "upload", "url", "linkedin", "sample"] } }
+
+[[events]]
+name = "resume_created"
+step = "start"
+
+[[events]]
+name = "resume_imported"
+step = "start"
+props = { source = { type = "enum", values = ["pdf", "docx", "json", "linkedin", "plain"] } }
+
+[[events]]
+name = "template_open"
+step = "start"
+
+[[events]]
+name = "template_apply"
+step = "start"
+
+[[events]]
+name = "template_switch"
+step = "start"
+props = { n = { type = "int", max = 20 } }
+
+# ── edit ────────────────────────────────────────────────────────────────────
+
+[[events]]
+name = "section_focus"
+step = "edit"
+props = { section = { type = "short_string" } }
+
+[[events]]
+name = "section_complete"
+step = "edit"
+props = { section = { type = "short_string" } }
+
+# ── assist ──────────────────────────────────────────────────────────────────
+
+[[events]]
+name = "ai_invoke"
+step = "assist"
+props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] } }
+
+[[events]]
+name = "ai_result"
+step = "assist"
+props.op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] }
+props.ok = { type = "bool", optional = false }
+props.duration_s = { type = "bucket", buckets = [1.0, 3.0, 10.0, 30.0] }
+
+[[events]]
+name = "ai_regen"
+step = "assist"
+props.op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] }
+props.n = { type = "int", max = 20 }
+
+[[events]]
+name = "ai_accept"
+step = "assist"
+props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] } }
+
+[[events]]
+name = "ai_reject"
+step = "assist"
+props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] } }
+
+# Post-AI edit behaviour is the best proxy for AI output quality — and it is
+# computable without sending content: a normalised edit-distance ratio and a
+# length delta, both bucketed.
+[[events]]
+name = "ai_edit_after"
+step = "assist"
+props.op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] }
+props.edit_ratio = { type = "bucket", buckets = [0.1, 0.3, 0.5, 0.8] }
+props.length_delta = { type = "bucket", buckets = [-100.0, -20.0, 20.0, 100.0] }
+
+[[events]]
+name = "resume_tailored"
+step = "assist"
+
+[[events]]
+name = "cover_letter_generated"
+step = "assist"
+
+# ── score ───────────────────────────────────────────────────────────────────
+
+[[events]]
+name = "ats_check"
+step = "score"
+
+[[events]]
+name = "ats_score_bucket"
+step = "score"
+props = { score = { type = "bucket", buckets = [20.0, 40.0, 60.0, 80.0] } }
+
+[[events]]
+name = "ats_checked"
+step = "score"
+
+# ── export ──────────────────────────────────────────────────────────────────
+
+[[events]]
+name = "export_open"
+step = "export"
+
+[[events]]
+name = "export_attempt"
+step = "export"
+props = { format = { type = "enum", values = ["pdf", "docx", "json"] } }
+
+[[events]]
+name = "export_result"
+step = "export"
+props.ok = { type = "bool", optional = false }
+props.format = { type = "enum", values = ["pdf", "docx", "json"] }
+
+[[events]]
+name = "export_downloaded"
+step = "export"
+props = { format = { type = "enum", values = ["pdf", "docx", "json"] } }
+
+# ── pay ─────────────────────────────────────────────────────────────────────
+
+[[events]]
+name = "paywall_shown"
+step = "pay"
+props = { gate = { type = "enum", values = ["ai", "export", "ats", "credits"] } }
+
+[[events]]
+name = "credits_exhausted"
+step = "pay"
+
+[[events]]
+name = "checkout_start"
+step = "pay"
+props = { plan = { type = "enum", values = ["monthly", "yearly"] } }
+
+[[events]]
+name = "checkout_result"
+step = "pay"
+props.ok = { type = "bool", optional = false }
+props.plan = { type = "enum", values = ["monthly", "yearly"] }

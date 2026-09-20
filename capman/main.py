@@ -634,5 +634,30 @@ def setup_qmd(vault_path, name, apply_changes):
     console.print("Then: qmd embed")
 
 
+@cli.group("web")
+def web():
+    """Generic web-behavior analytics tooling (product manifests)."""
+
+
+@web.command("codegen")
+@click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--lang", type=click.Choice(["ts", "py"]), default="ts", show_default=True,
+              help="Output language: ts (client SDK types) or py (server Literals)")
+@click.option("--out", "out_path", default=None, type=click.Path(dir_okay=False),
+              help="Write to file instead of stdout")
+def web_codegen(manifest_path, lang, out_path):
+    """Emit typed event vocabulary from a product manifest (client and collector cannot drift)."""
+    from capman.web.codegen import codegen
+    try:
+        output = codegen(manifest_path, lang=lang)
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+    if out_path:
+        Path(out_path).write_text(output)
+        console.print(f"[green]Wrote {lang} codegen output:[/green] {out_path}")
+    else:
+        click.echo(output)
+
+
 if __name__ == "__main__":
     cli()
