@@ -27,6 +27,13 @@ success_when = ["export_result.ok == true", "checkout_result.ok == true"]
 
 # ── land ────────────────────────────────────────────────────────────────────
 
+# Route changes — the backbone of episode narratives and signatures. The path
+# is a sanitized pathname (lowercase, no query, allowlist chars, <=64).
+[[events]]
+name = "page_view"
+step = "land"
+props = { path = { type = "short_string" } }
+
 [[events]]
 name = "signup_started"
 step = "land"
