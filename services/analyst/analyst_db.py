@@ -77,6 +77,15 @@ class AnalystDB:
         if not episodes:
             return 0
         async with self.tx(tenant) as conn:
+            # events.session_id has an FK to sessions(id): every web episode is
+            # registered there first (dominant_app='web'), with web_episodes
+            # extending it by signature/outcome/friction.
+            await conn.executemany(
+                "INSERT INTO sessions (id, user_id, started_at, ended_at, dominant_app, "
+                "primary_domain, event_count, analyzed) VALUES ($1,$2,$3,$4,'web','',$5,0)",
+                [(e["id"], tenant, e["started_at"], e["ended_at"], e["n_events"])
+                 for e in episodes],
+            )
             await conn.executemany(
                 "INSERT INTO web_episodes (id, user_id, sid_hash, started_at, ended_at, "
                 "signature, coarse_signature, outcome, step_reached, n_events, friction_flags, "
@@ -140,6 +149,12 @@ class AnalystDB:
         async with self.tx(tenant) as conn:
             await conn.execute(
                 "UPDATE web_episodes SET analyzed = 1 WHERE id = ANY($1::text[])", episode_ids
+            )
+            await conn.execute(
+                "UPDATE sessions SET analyzed = 1 WHERE id = ANY($1::text[])", episode_ids
+            )
+            await conn.execute(
+                "UPDATE sessions SET analyzed = 1 WHERE id = ANY($1::text[])", episode_ids
             )
 
     async def insert_analysis(self, tenant: str, episode_id: str, pass1: dict,
