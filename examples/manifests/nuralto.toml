@@ -50,7 +50,7 @@ props = { result_count = { type = "bucket", buckets = [0.0, 1.0, 5.0, 20.0] } }
 [[events]]
 name = "job_saved"
 step = "land"
-props = { source = { type = "enum", values = ["search", "recommendation"] } }
+props = { source = { type = "short_string", pattern = "^[a-z_]{1,32}$" } }
 
 [[events]]
 name = "pricing_view"
@@ -104,30 +104,30 @@ props = { section = { type = "short_string" } }
 [[events]]
 name = "ai_invoke"
 step = "assist"
-props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] } }
+props = { op = { type = "enum", values = ["tailor", "summary", "bullet", "skills", "cover_letter"] } }
 
 [[events]]
 name = "ai_result"
 step = "assist"
-props.op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] }
+props.op = { type = "enum", values = ["tailor", "summary", "bullet", "skills", "cover_letter"] }
 props.ok = { type = "bool", optional = false }
 props.duration_s = { type = "bucket", buckets = [1.0, 3.0, 10.0, 30.0] }
 
 [[events]]
 name = "ai_regen"
 step = "assist"
-props.op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] }
+props.op = { type = "enum", values = ["tailor", "summary", "bullet", "skills", "cover_letter"] }
 props.n = { type = "int", max = 20 }
 
 [[events]]
 name = "ai_accept"
 step = "assist"
-props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] } }
+props = { op = { type = "enum", values = ["tailor", "summary", "bullet", "skills", "cover_letter"] } }
 
 [[events]]
 name = "ai_reject"
 step = "assist"
-props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] } }
+props = { op = { type = "enum", values = ["tailor", "summary", "bullet", "skills", "cover_letter"] } }
 
 # Post-AI edit behaviour is the best proxy for AI output quality — and it is
 # computable without sending content: a normalised edit-distance ratio and a
@@ -135,7 +135,7 @@ props = { op = { type = "enum", values = ["bullet", "summary", "cover_letter", "
 [[events]]
 name = "ai_edit_after"
 step = "assist"
-props.op = { type = "enum", values = ["bullet", "summary", "cover_letter", "tailor", "rewrite"] }
+props.op = { type = "enum", values = ["tailor", "summary", "bullet", "skills", "cover_letter"] }
 props.edit_ratio = { type = "bucket", buckets = [0.1, 0.3, 0.5, 0.8] }
 props.length_delta = { type = "bucket", buckets = [-100.0, -20.0, 20.0, 100.0] }
 
@@ -171,25 +171,25 @@ step = "export"
 [[events]]
 name = "export_attempt"
 step = "export"
-props = { format = { type = "enum", values = ["pdf", "docx", "json"] } }
+props = { format = { type = "enum", values = ["pdf", "docx", "txt"] } }
 
 [[events]]
 name = "export_result"
 step = "export"
 props.ok = { type = "bool", optional = false }
-props.format = { type = "enum", values = ["pdf", "docx", "json"] }
+props.format = { type = "enum", values = ["pdf", "docx", "txt"] }
 
 [[events]]
 name = "export_downloaded"
 step = "export"
-props = { format = { type = "enum", values = ["pdf", "docx", "json"] } }
+props = { format = { type = "enum", values = ["pdf", "docx", "txt"] } }
 
 # ── pay ─────────────────────────────────────────────────────────────────────
 
 [[events]]
 name = "paywall_shown"
 step = "pay"
-props = { gate = { type = "enum", values = ["ai", "export", "ats", "credits"] } }
+props = { gate = { type = "short_string", pattern = "^[a-z_]{1,40}$" } }
 
 [[events]]
 name = "credits_exhausted"
@@ -198,10 +198,11 @@ step = "pay"
 [[events]]
 name = "checkout_start"
 step = "pay"
-props = { plan = { type = "enum", values = ["monthly", "yearly"] } }
+props.plan = { type = "enum", values = ["pro", "career"] }
+props.period = { type = "enum", values = ["monthly", "yearly"] }
 
 [[events]]
 name = "checkout_result"
 step = "pay"
 props.ok = { type = "bool", optional = false }
-props.plan = { type = "enum", values = ["monthly", "yearly"] }
+props.plan = { type = "enum", values = ["pro", "career"] }
