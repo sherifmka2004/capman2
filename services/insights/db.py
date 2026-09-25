@@ -160,6 +160,54 @@ class InsightsDB:
             )
         return {"total": total or 0, "playbooks": out}
 
+    async def episodes_for_email(self, tenant: str, email: str, limit: int = 200) -> list[dict]:
+        """Episodes for one identified visitor — joins web_visitor_identity
+        (sid_hash -> email, written only by the collector's opt-in
+        POST /identify) to web_episodes (sid_hash) to session_analyses
+        (episode id). Only ever finds episodes captured *after* the visitor
+        was identified in that tab — there is no reliable way to retro-link
+        older anonymous episodes (no stored IP, no persistent id)."""
+        async with self.tx(tenant) as conn:
+            rows = await conn.fetch(
+                """
+                SELECT e.id, e.started_at, e.ended_at, e.outcome, e.step_reached,
+                       e.n_events, e.friction_flags, e.analyzed,
+                       sa.problem_statement, sa.approach_description,
+                       sa.confidence, sa.analyzed_at, sa.methodology_tags,
+                       i.first_seen AS identity_first_seen, i.last_seen AS identity_last_seen
+                FROM web_visitor_identity i
+                JOIN web_episodes e ON e.sid_hash = i.sid_hash
+                LEFT JOIN session_analyses sa ON sa.session_id = e.id
+                WHERE i.email = $1
+                ORDER BY e.started_at DESC
+                LIMIT $2
+                """,
+                email.strip().lower(),
+                limit,
+            )
+        out = []
+        for r in rows:
+            out.append(
+                {
+                    "id": r["id"],
+                    "started_at": r["started_at"],
+                    "ended_at": r["ended_at"],
+                    "outcome": r["outcome"] or "",
+                    "step_reached": r["step_reached"] or "",
+                    "n_events": r["n_events"] or 0,
+                    "friction_flags": _loads(r["friction_flags"], []),
+                    "analyzed": bool(r["analyzed"]),
+                    "problem_statement": r["problem_statement"] or "",
+                    "approach_description": r["approach_description"] or "",
+                    "confidence": r["confidence"] or 0.0,
+                    "analyzed_at": r["analyzed_at"],
+                    "methodology_tags": _loads(r["methodology_tags"], []),
+                    "identity_first_seen": r["identity_first_seen"],
+                    "identity_last_seen": r["identity_last_seen"],
+                }
+            )
+        return out
+
     async def gaps(self, tenant: str, limit: int = 100) -> list[dict]:
         async with self.tx(tenant) as conn:
             total = await conn.fetchval("SELECT count(*) FROM knowledge_gaps")

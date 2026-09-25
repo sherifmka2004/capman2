@@ -20,6 +20,13 @@ INSERT INTO events (id, user_id, session_id, type, ts, app, window_title, payloa
 VALUES ($1, $2, NULL, $3, $4, $5, '', $6, 'web')
 """
 
+_UPSERT_IDENTITY = """
+INSERT INTO web_visitor_identity (id, user_id, sid_hash, email, first_seen, last_seen)
+VALUES ($1, $2, $3, $4, $5, $5)
+ON CONFLICT (user_id, sid_hash) DO UPDATE
+  SET email = EXCLUDED.email, last_seen = EXCLUDED.last_seen
+"""
+
 
 class CollectorDB:
     def __init__(self, dsn: str, min_pool: int = 1, max_pool: int = 5):
@@ -65,3 +72,13 @@ class CollectorDB:
                 await conn.execute("SELECT set_config('capman.user_id', $1, true)", tenant)
                 await conn.executemany(_INSERT_EVENTS, rows)
         return len(rows)
+
+    async def upsert_identity(self, tenant: str, sid_hash: str, email: str, ts: float) -> None:
+        """Link one visit's sid_hash to an email under the tenant's RLS key.
+        Idempotent: re-identifying the same sid_hash just refreshes email/last_seen."""
+        if self._pool is None:
+            raise RuntimeError("db not connected")
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SELECT set_config('capman.user_id', $1, true)", tenant)
+                await conn.execute(_UPSERT_IDENTITY, str(uuid.uuid4()), tenant, sid_hash, email, ts)

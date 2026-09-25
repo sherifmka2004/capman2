@@ -4,10 +4,14 @@
  * Hard privacy gates, in order:
  *  1. DNT / GPC → the client is a permanent no-op.
  *  2. Identity is a per-tab sessionStorage UUID (cw_sid) — fresh per tab,
- *     gone on close, never linked to any persistent product-side id.
+ *     gone on close, never linked to any persistent product-side id, UNLESS
+ *     the host app deliberately calls `identify(email)` (see below).
  *  3. Only manifest-declared event names and props are accepted by the
  *     collector; this SDK adds queueing and friction detection, nothing more.
- *  4. No DOM text, field values, URLs-with-query, or free text ever leaves.
+ *  4. No DOM text, field values, URLs-with-query, or free text ever leaves
+ *     `track()` — `identify()` is the one deliberate, opt-in exception,
+ *     gated behind its own `identifyEndpoint` config and writing to the
+ *     collector's separate identity side table, never into event props.
  */
 import {
   BacktrackTracker,
@@ -57,6 +61,7 @@ function noopClient(): CapmanWebClient {
     track() {},
     trackError() {},
     flush() {},
+    identify() {},
     sid: "",
     enabled: false,
   };
@@ -102,6 +107,24 @@ export function createCapmanWeb(config: CapmanWebConfig): CapmanWebClient {
     },
     trackError(codeClass) {
       push("error_shown", { code_class: codeClass });
+    },
+    identify(email) {
+      if (!config.identifyEndpoint) return;
+      const trimmed = (email || "").trim();
+      if (!trimmed) return;
+      const dedupeKey = `cw_identified:${sid}`;
+      try {
+        if (sessionStorage.getItem(dedupeKey) === trimmed) return;
+        sessionStorage.setItem(dedupeKey, trimmed);
+      } catch {
+        // sessionStorage unavailable — fall through and send anyway
+      }
+      void fetch(config.identifyEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sid, email: trimmed }),
+        keepalive: true,
+      }).catch(() => {});
     },
     flush() {
       if (!buffer.length) return;

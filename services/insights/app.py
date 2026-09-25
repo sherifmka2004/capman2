@@ -109,6 +109,20 @@ async def api_playbooks(request: Request, limit: int = 100):
     return await db.playbooks(TENANT, limit)
 
 
+@app.get("/api/user")
+async def api_user(request: Request, email: str = ""):
+    """Look up episodes for one identified visitor. Only ever finds episodes
+    captured after the collector's opt-in POST /identify linked their email
+    to a sid — see db.py's episodes_for_email() docstring."""
+    if (deny := _guard(request)) is not None:
+        return deny
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        return JSONResponse({"error": "invalid_email"}, status_code=400)
+    episodes = await db.episodes_for_email(TENANT, email)
+    return {"email": email, "episodes": episodes}
+
+
 @app.get("/api/gaps")
 async def api_gaps(request: Request, limit: int = 100):
     if (deny := _guard(request)) is not None:

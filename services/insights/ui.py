@@ -135,19 +135,20 @@ INSIGHTS_HTML = """<!DOCTYPE html>
     <div class="scope-card">
       <div class="scope-label">Tenant</div>
       <div class="scope-current"><span id="tenant-name">__TENANT__</span></div>
-      <span class="scope-private">Anonymous web-behavior analysis. No PII.</span>
+      <span class="scope-private">Anonymous by default. A visitor's email is linked only when they were logged in and the product called identify().</span>
     </div>
     <nav class="sidebar-nav" aria-label="Workspace">
       <div class="nav-label">Overview</div>
       <button type="button" class="nav-item active" data-view="home" aria-current="page"><span>Home</span></button>
       <div class="nav-label">Behavior</div>
       <button type="button" class="nav-item" data-view="episodes"><span>Episodes</span><span class="nav-count" id="count-episodes">0</span></button>
+      <button type="button" class="nav-item" data-view="user"><span>Look up a user</span></button>
       <div class="nav-label">Knowledge</div>
       <button type="button" class="nav-item" data-view="playbooks"><span>Playbooks</span><span class="nav-count" id="count-playbooks">0</span></button>
       <button type="button" class="nav-item" data-view="gaps"><span>Knowledge gaps</span><span class="nav-count" id="count-gaps">0</span></button>
     </nav>
     <div class="sidebar-footer">
-      <p>Built from anonymized session behavior — no visitor identity is ever stored.</p>
+      <p>Episodes are anonymous unless a visitor was identified while logged in. Identity lookups here are exact-match only — no free text is ever sent to an LLM.</p>
     </div>
   </aside>
   <main class="workspace">
@@ -198,6 +199,19 @@ INSIGHTS_HTML = """<!DOCTYPE html>
   <div class="card-list" id="episodes-list"><div class="empty">Loading episodes…</div></div>
 </div>
 
+<!-- User lookup view -->
+<div class="view hidden" id="view-user">
+  <div class="toolbar" style="padding-bottom:12px">
+    <input id="user-email-input" type="email" placeholder="visitor email…"
+      style="background:#12151A;border:1px solid #303844;color:#E6E9EE;border-radius:8px;padding:8px 12px;font-size:13px;min-width:280px;flex:1;margin-bottom:10px"
+      onkeydown="if(event.key==='Enter') lookupUser()">
+    <button type="button" onclick="lookupUser()" class="filter-btn active" style="margin-bottom:10px">Look up</button>
+  </div>
+  <div class="card-list" id="user-results">
+    <div class="empty">Exact-match lookup only — enter the full email of a visitor who was logged in when their episodes were captured. Episodes from before they were identified, or from tabs where identify() was never called, won't show up here.</div>
+  </div>
+</div>
+
 <!-- Playbooks view -->
 <div class="view hidden" id="view-playbooks">
   <div class="card-list" id="playbooks-list"><div class="empty">Loading playbooks…</div></div>
@@ -223,7 +237,7 @@ INSIGHTS_HTML = """<!DOCTYPE html>
 const tabs = document.querySelectorAll('.nav-item[data-view]');
 const views = document.querySelectorAll('.view');
 const pageTitle = document.getElementById('page-title');
-const pageTitles = { home: 'Home', episodes: 'Episodes', playbooks: 'Playbooks', gaps: 'Knowledge gaps' };
+const pageTitles = { home: 'Home', episodes: 'Episodes', user: 'Look up a user', playbooks: 'Playbooks', gaps: 'Knowledge gaps' };
 const loaders = { home: loadHome, episodes: loadEpisodes, playbooks: loadPlaybooks, gaps: loadGaps };
 const loaded = {};
 
@@ -392,6 +406,61 @@ function openEpisode(id) {
   if (ep.approach_description) html += `<h3>What happened</h3><p>${escapeHtml(ep.approach_description)}</p>`;
   if (ep.friction_flags && ep.friction_flags.length) html += `<h3>Friction flags</h3><ul>${ep.friction_flags.map(f => '<li>' + escapeHtml(f) + '</li>').join('')}</ul>`;
   if (ep.methodology_tags && ep.methodology_tags.length) html += `<h3>Tags</h3><ul>${ep.methodology_tags.map(t => '<li>' + escapeHtml(t) + '</li>').join('')}</ul>`;
+  html += `<h3>Timing</h3><p>Started ${relativeTime(ep.started_at)}${ep.analyzed_at ? ' · analyzed ' + relativeTime(ep.analyzed_at) : ' · not yet analyzed'}</p>`;
+  openModal(html);
+}
+
+// ====================================================================
+// User lookup — exact email match only. No LLM in this path: the answer
+// is just the real rows for that email, nothing generated or inferred.
+// ====================================================================
+let _userLookupCache = [];
+function lookupUser() {
+  const input = document.getElementById('user-email-input');
+  const email = (input.value || '').trim().toLowerCase();
+  const list = document.getElementById('user-results');
+  if (!email || !email.includes('@')) {
+    list.innerHTML = '<div class="empty">Enter a full email address.</div>';
+    return;
+  }
+  list.innerHTML = '<div class="empty">Looking up…</div>';
+  fetch('/api/user?email=' + encodeURIComponent(email)).then(r => {
+    if (!r.ok) throw new Error('lookup failed');
+    return r.json();
+  }).then(data => {
+    _userLookupCache = data.episodes || [];
+    if (!_userLookupCache.length) {
+      list.innerHTML = `<div class="empty">No identified episodes for <b>${escapeHtml(data.email)}</b>. Either they were never logged in when captured, or identify() was never called for their tab.</div>`;
+      return;
+    }
+    list.innerHTML = _userLookupCache.map((ep, idx) => `
+      <div class="card" onclick="openUserEpisode(${idx})">
+        <div class="card-title">${escapeHtml(ep.problem_statement || 'Unanalyzed episode')}</div>
+        <div class="card-meta">
+          <span class="${outcomeTagClass(ep.outcome)}">${escapeHtml(ep.outcome || 'pending')}</span>
+          <span>reached ${escapeHtml(ep.step_reached || '—')}</span>
+          <span>${ep.n_events} events</span>
+          ${ep.confidence ? '<span class="tag-score">conf ' + ep.confidence.toFixed(2) + '</span>' : ''}
+        </div>
+        <div class="card-body">${escapeHtml((ep.approach_description || '').slice(0, 220))}</div>
+      </div>
+    `).join('');
+  }).catch(() => {
+    list.innerHTML = '<div class="empty home-error">Lookup failed. Try again.</div>';
+  });
+}
+function openUserEpisode(idx) {
+  const ep = _userLookupCache[idx];
+  if (!ep) return;
+  let html = `<h2>${escapeHtml(ep.problem_statement || 'Unanalyzed episode')}</h2>`;
+  html += `<div class="card-meta" style="margin-bottom:12px">
+    <span class="${outcomeTagClass(ep.outcome)}">${escapeHtml(ep.outcome || 'pending')}</span>
+    <span>reached ${escapeHtml(ep.step_reached || '—')}</span>
+    <span>${ep.n_events} events</span>
+    ${ep.confidence ? '<span class="tag-score">confidence ' + ep.confidence.toFixed(2) + '</span>' : ''}
+  </div>`;
+  if (ep.approach_description) html += `<h3>What happened</h3><p>${escapeHtml(ep.approach_description)}</p>`;
+  if (ep.friction_flags && ep.friction_flags.length) html += `<h3>Friction flags</h3><ul>${ep.friction_flags.map(f => '<li>' + escapeHtml(f) + '</li>').join('')}</ul>`;
   html += `<h3>Timing</h3><p>Started ${relativeTime(ep.started_at)}${ep.analyzed_at ? ' · analyzed ' + relativeTime(ep.analyzed_at) : ' · not yet analyzed'}</p>`;
   openModal(html);
 }

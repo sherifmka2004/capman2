@@ -1,9 +1,18 @@
 """Web-behavior collector — a write-only ingestion endpoint.
 
 Deliberately NOT capman.api.server: that app has no authentication and exposes
-reads/controls. This service exposes exactly two routes (POST /collect,
-GET /health), authenticates writes with a per-product shared secret, and can
-only ever INSERT manifest-validated events under the selected tenant's RLS key.
+reads/controls. This service exposes exactly three routes (POST /collect,
+POST /identify, GET /health), authenticates writes with a per-product shared
+secret, and can only ever INSERT under the selected tenant's RLS key.
+
+/collect and /identify are two different trust boundaries wearing the same
+auth: /collect can only ever write manifest-validated, no-free-text events
+(see capman/web/manifest.py) — PII cannot enter it by construction. /identify
+is the one deliberate exception: it accepts an email and links it to a visit
+id, but only into the separate web_visitor_identity table (see
+deploy/postgres/init/003_web_identity.sql), never into events/web_episodes.
+A product only ever gets identity linking if its own frontend chooses to call
+/identify — /collect's no-PII guarantee holds either way.
 
 Environment:
   CAPMAN_WEB_MANIFESTS  comma-separated paths to product manifest TOMLs
@@ -26,7 +35,10 @@ from fastapi import FastAPI, Request, Response
 
 from capman.web.manifest import ProductManifest, load_manifests, tenant_id
 from db import CollectorDB
+from identity import IdentityError, validate_identify
 from validate import MAX_BODY_BYTES, BatchError, validate_batch
+
+MAX_IDENTIFY_BODY_BYTES = 2 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +164,37 @@ def create_app(manifests: dict[str, ProductManifest], keys: dict[str, str], db: 
             status_code=200,
             media_type="application/json",
         )
+
+    @app.post("/identify")
+    async def identify(request: Request) -> Response:
+        product = _resolve_product(keys, request.headers.get("x-cw-key"))
+        if product is None or product not in manifests:
+            return _json_error(401, "unauthorized", "invalid or missing X-CW-Key")
+
+        body_bytes = await request.body()
+        if len(body_bytes) > MAX_IDENTIFY_BODY_BYTES:
+            return _json_error(413, "body_too_large", f"body exceeds {MAX_IDENTIFY_BODY_BYTES} bytes")
+
+        try:
+            body = json.loads(body_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return _json_error(400, "invalid_json", "body is not valid JSON")
+
+        try:
+            ident = validate_identify(body)
+        except IdentityError as exc:
+            return _json_error(400, exc.code, exc.message)
+
+        if not limiter.allow(f"identify:{ident.sid_hash}", 1):
+            return _json_error(429, "rate_limited", "too many identify calls for this visit")
+
+        try:
+            await db.upsert_identity(tenant_id(manifests[product]), ident.sid_hash, ident.email, ident.ts)
+        except Exception:
+            logger.exception("identity upsert failed for product=%s", product)
+            return _json_error(500, "storage_error", "could not persist identity")
+
+        return Response(status_code=204)
 
     return app
 
